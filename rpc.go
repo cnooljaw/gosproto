@@ -153,6 +153,9 @@ func (rpc *Rpc) Dispatch(packed []byte) (mode RpcMode, name string, session int3
 }
 
 func (rpc *Rpc) ResponseEncode(name string, session int32, response interface{}) (data []byte, err error) {
+	if session <= 0 {
+		return nil, ErrUnknownSession
+	}
 	index, ok := rpc.nameMap[name]
 	if !ok {
 		err = ErrUnknownProtocol
@@ -161,6 +164,9 @@ func (rpc *Rpc) ResponseEncode(name string, session int32, response interface{})
 
 	protocol := rpc.protocols[index]
 	if protocol.Response != nil {
+		if reflect.TypeOf(response) != protocol.Response {
+			return nil, ErrEncode
+		}
 		if data, err = Encode(response); err != nil {
 			return
 		}
@@ -181,6 +187,9 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 
 	protocol := rpc.protocols[index]
 	if protocol.Request != nil {
+		if reflect.TypeOf(req) != protocol.Request {
+			return nil, ErrEncode
+		}
 		if data, err = Encode(req); err != nil {
 			return
 		}
@@ -191,6 +200,9 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 	}
 
 	if protocol.HasResponse() {
+		if session <= 0 {
+			return nil, ErrUnknownSession
+		}
 		rpc.sessionMutex.Lock()
 		defer rpc.sessionMutex.Unlock()
 		if _, ok := rpc.sessions[session]; ok {
@@ -198,6 +210,9 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 			return
 		}
 		header.Session = &session
+		if len(rpc.sessions) >= 1024 {
+			return nil, ErrLimit
+		}
 		rpc.sessions[session] = index
 	}
 
@@ -254,4 +269,18 @@ func NewRpc(protocols []*Protocol) (*Rpc, error) {
 		sessions:  make(map[int32]int),
 	}
 	return rpc, nil
+}
+
+// CancelSession 撤销调用方不再等待的请求，发送失败、超时或断线时由会话 owner 调用。
+func (rpc *Rpc) CancelSession(session int32) {
+	rpc.sessionMutex.Lock()
+	defer rpc.sessionMutex.Unlock()
+	delete(rpc.sessions, session)
+}
+
+// ResetSessions 清理单连接的全部等待请求；不改变协议定义。
+func (rpc *Rpc) ResetSessions() {
+	rpc.sessionMutex.Lock()
+	defer rpc.sessionMutex.Unlock()
+	clear(rpc.sessions)
 }

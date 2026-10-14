@@ -1,6 +1,9 @@
 package sproto
 
-import "reflect"
+import (
+	"math"
+	"reflect"
+)
 
 const (
 	EncodeBufferSize = 4096
@@ -105,7 +108,7 @@ func extractInt(v reflect.Value) (n uint64, sz int) {
 		n = v.Uint()
 		sz = 4
 	default: //case reflect.Uint32, reflect.Uint64, reflect.Uint:
-		n := v.Uint()
+		n = v.Uint()
 		if n <= MaxInt32 {
 			sz = 4
 		} else {
@@ -181,6 +184,9 @@ func encodeStringSlice(sf *SprotoField, v reflect.Value) []byte {
 }
 
 func encodeIntSlice(sf *SprotoField, v reflect.Value) []byte {
+	if v.Len() == 0 {
+		return []byte{}
+	}
 	vals := make([]uint64, v.Len())
 	var intLen int = 4 // could be 4 and 8
 	for i := 0; i < v.Len(); i++ {
@@ -287,17 +293,9 @@ func encodeMessage(st *SprotoType, v reflect.Value) []byte {
 	return Append(encodeHeaders(headers[:offset], len(buffer)), buffer)
 }
 
+// Encode 使用默认有限预算编码结构体。
 func Encode(sp interface{}) ([]byte, error) {
-	t, v, err := getbase(sp)
-	if err != nil {
-		return nil, err
-	}
-
-	st, err := GetSprotoType(t.Elem())
-	if err != nil {
-		return nil, err
-	}
-	return encodeMessage(st, v), nil
+	return EncodeWithLimits(sp, Limits{})
 }
 
 func MustEncode(sp interface{}) []byte {
@@ -306,4 +304,22 @@ func MustEncode(sp interface{}) []byte {
 		panic(err)
 	}
 	return d
+}
+
+func encodeDouble(_ *SprotoField, value reflect.Value) []byte {
+	buffer := make([]byte, 8)
+	writeUint64(buffer, math.Float64bits(value.Elem().Float()))
+	return buffer
+}
+
+func encodeDoubleSlice(_ *SprotoField, value reflect.Value) []byte {
+	if value.Len() == 0 {
+		return []byte{}
+	}
+	buffer := make([]byte, 1+8*value.Len())
+	buffer[0] = 8
+	for i := 0; i < value.Len(); i++ {
+		writeUint64(buffer[1+i*8:], math.Float64bits(value.Index(i).Float()))
+	}
+	return buffer
 }

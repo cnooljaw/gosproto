@@ -80,7 +80,19 @@ func Pack(src []byte) []byte {
 	return packed[:offset]
 }
 
+// Unpack 使用默认解包大小预算。
 func Unpack(src []byte) ([]byte, error) {
+	return UnpackWithLimit(src, 8<<20)
+}
+
+// UnpackWithLimit 在扩容前限制解包大小。
+func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
+	if maxBytes < 1 {
+		return nil, ErrInvalidLimits
+	}
+	if len(src) > maxBytes {
+		return nil, ErrLimit
+	}
 	unpacked := make([]byte, 0, len(src))
 	buf := make([]byte, 8)
 	for len(src) > 0 {
@@ -95,7 +107,10 @@ func Unpack(src []byte) ([]byte, error) {
 			if sz < used {
 				return nil, ErrUnpack
 			}
-			unpacked = Append(unpacked, src[2:used])
+			if used-2 > maxBytes-len(unpacked) {
+				return nil, ErrLimit
+			}
+			unpacked = append(unpacked, src[2:used]...)
 		} else {
 			notzero := 0
 			for i := 0; i < 8; i++ {
@@ -111,7 +126,10 @@ func Unpack(src []byte) ([]byte, error) {
 				header = header >> 1
 			}
 			used = notzero + 1
-			unpacked = Append(unpacked, buf)
+			if 8 > maxBytes-len(unpacked) {
+				return nil, ErrLimit
+			}
+			unpacked = append(unpacked, buf...)
 		}
 		src = src[used:]
 	}

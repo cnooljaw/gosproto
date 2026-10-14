@@ -10,7 +10,7 @@ package sproto_echo
 import (
 	"reflect"
 
-	"github.com/xjdrew/gosproto"
+	"github.com/cnooljaw/gosproto"
 )
 
 type PingResponse struct {

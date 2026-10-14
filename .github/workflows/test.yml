@@ -1,0 +1,24 @@
+name: official-sproto-compat
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Build pinned official C/Lua oracle
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 liblua5.4-dev lua-lpeg pkg-config
+          git clone https://github.com/cloudwu/sproto.git "$RUNNER_TEMP/sproto-oracle"
+          git -C "$RUNNER_TEMP/sproto-oracle" checkout e93fd5a0653b2bcab38d3b830958bf2e3a901b5f
+          mkdir -p "$RUNNER_TEMP/sproto-oracle/sproto"
+          cc -O2 -shared -fPIC $(pkg-config --cflags lua5.4) '-Dluai_unlikely(x)=(x)' -o "$RUNNER_TEMP/sproto-oracle/sproto/core.so" "$RUNNER_TEMP/sproto-oracle/sproto.c" "$RUNNER_TEMP/sproto-oracle/lsproto.c"
+      - name: Unit, official oracle, race and vet
+        run: |
+          SPROTO_ORACLE_DIR="$RUNNER_TEMP/sproto-oracle" go test -race ./... -timeout=2m
+          go vet ./...
+      - name: Bounded fuzz
+        run: go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime=30s -parallel=2

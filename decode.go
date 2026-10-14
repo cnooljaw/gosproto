@@ -1,8 +1,8 @@
 package sproto
 
 import (
-	"fmt"
-	"os"
+	"encoding/binary"
+	"math"
 	"reflect"
 )
 
@@ -11,315 +11,313 @@ type Tag struct {
 	Val *uint16
 }
 
+func readUint16(buffer []byte) uint16 {
+	return binary.LittleEndian.Uint16(buffer)
+}
+
+func readUint32(buffer []byte) uint32 {
+	return binary.LittleEndian.Uint32(buffer)
+}
+
+func readUint64(buffer []byte) uint64 {
+	return binary.LittleEndian.Uint64(buffer)
+}
+
 func readChunk(chunk []byte) (int, []byte, error) {
 	if len(chunk) < 4 {
 		return 0, nil, ErrDecode
 	}
-	sz := int(readUint32(chunk))
-	expected := 4 + sz
-	if len(chunk) < expected {
+	size := uint64(readUint32(chunk))
+	if size > uint64(len(chunk)-4) {
 		return 0, nil, ErrDecode
 	}
-	return expected, chunk[4:expected], nil
+	end := 4 + int(size)
+	return end, chunk[4:end], nil
 }
 
-func readUint16(buf []byte) uint16 {
-	var n uint16
-	n = uint16(buf[1]) << 8
-	n |= uint16(buf[0])
-	return n
-}
-
-func readUint32(buf []byte) uint32 {
-	var n uint32
-	n = uint32(buf[3]) << 24
-	n |= uint32(buf[2]) << 16
-	n |= uint32(buf[1]) << 8
-	n |= uint32(buf[0])
-	return n
-}
-
-func readUint64(buf []byte) uint64 {
-	var n uint64
-	n = uint64(buf[7]) << 56
-	n |= uint64(buf[6]) << 48
-	n |= uint64(buf[5]) << 40
-	n |= uint64(buf[4]) << 32
-	n |= uint64(buf[3]) << 24
-	n |= uint64(buf[2]) << 16
-	n |= uint64(buf[1]) << 8
-	n |= uint64(buf[0])
-	return n
-}
-
-func decodeBool(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	b := true
-	if *val == 0 {
-		b = false
+func targetValue(value reflect.Value) reflect.Value {
+	if value.Kind() == reflect.Ptr {
+		value.Set(reflect.New(value.Type().Elem()))
+		return value.Elem()
 	}
-	if v.Kind() == reflect.Ptr {
-		v.Addr().Elem().Set(reflect.ValueOf(&b))
-	} else {
-		v.SetBool(b)
-	}
-	return nil
+	return value
 }
 
-func decodeInt(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	var n uint64
-	if val != nil {
-		n = uint64(*val)
-	} else {
-		switch len(data) {
-		case 0:
-			n = 0
-		case 4:
-			n = uint64(readUint32(data))
-		case 8:
-			n = readUint64(data)
-		default:
-			return fmt.Errorf("sproto: malformed integer data for field %s", sf.Name)
+func setInteger(value reflect.Value, bits uint64) error {
+	switch value.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		signed := int64(bits)
+		if value.OverflowInt(signed) {
+			return ErrDecode
 		}
-	}
-	if v.Type().Kind() == reflect.Ptr {
-		e := v.Type().Elem()
-		v.Addr().Elem().Set(reflect.New(e))
-		switch e.Kind() {
-		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-			switch len(data) {
-			case 4:
-				v.Elem().SetInt(int64(int32(n)))
-			case 8:
-				v.Elem().SetInt(int64(n))
-			case 0:
-				fallthrough
-			default:
-				v.Elem().SetInt(int64(int16(n)))
-			}
-		case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-			v.Elem().SetUint(n)
+		value.SetInt(signed)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if int64(bits) < 0 || value.OverflowUint(bits) {
+			return ErrDecode
 		}
-	} else {
-		// 初始化默认值
-		v.SetInt(0)
-		switch v.Kind() {
-		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-			switch len(data) {
-			case 4:
-				v.SetInt(int64(int32(n)))
-			case 8:
-				v.SetInt(int64(n))
-			case 0:
-				fallthrough
-			default:
-				v.SetInt(int64(int16(n)))
-			}
-		case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-			v.SetUint(n)
-		}
-	}
-	return nil
-}
-
-func decodeString(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	str := string(data)
-	if v.Kind() == reflect.Ptr {
-		*v.Addr().Interface().(**string) = &str
-	} else {
-		v.SetString(str)
-	}
-
-	return nil
-}
-
-func decodeBytes(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	buf := make([]byte, len(data))
-	copy(buf, data)
-	v.Set(reflect.ValueOf(buf))
-	return nil
-}
-
-func decodeBoolSlice(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	vals := make([]bool, len(data))
-	for i, v := range data {
-		if v == 0 {
-			vals[i] = false
-		} else {
-			vals[i] = true
-		}
-	}
-	v.Set(reflect.ValueOf(vals))
-	return nil
-}
-
-func decodeIntSlice(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	dataLen := len(data)
-	if dataLen < 1 {
+		value.SetUint(bits)
+	default:
 		return ErrDecode
 	}
-	intLen := int(data[0])
-	if (dataLen-1)%intLen != 0 {
-		return fmt.Errorf("sproto: malformed integer data for field %s", sf.Name)
-	}
-	sz := (dataLen - 1) / intLen
-	vals := reflect.MakeSlice(v.Type(), sz, sz)
-	data = data[1:]
-	var n uint64
-	for i := 0; i < sz; i++ {
-		if intLen == 4 {
-			n = uint64(readUint32(data[i*intLen:]))
-		} else {
-			n = readUint64(data[i*intLen:])
-		}
-
-		val := vals.Index(i)
-		switch e := v.Type().Elem(); e.Kind() {
-		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-			val.SetInt(int64(n))
-		case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-			val.SetUint(n)
-		}
-	}
-	v.Set(vals)
 	return nil
 }
 
-func decodeStringSlice(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	vals := make([]string, 0, 16)
+func decodeBool(inline *uint16, _ []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	if inline == nil {
+		return ErrDecode
+	}
+	targetValue(value).SetBool(*inline != 0)
+	return nil
+}
+
+func decodeInt(inline *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	var bits uint64
+	if inline != nil {
+		bits = uint64(*inline)
+	} else {
+		switch len(data) {
+		case 4:
+			bits = uint64(int64(int32(readUint32(data))))
+		case 8:
+			bits = readUint64(data)
+		default:
+			return ErrDecode
+		}
+	}
+	return setInteger(targetValue(value), bits)
+}
+
+func decodeDouble(inline *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	var bits uint64
+	if inline != nil {
+		bits = uint64(*inline)
+	} else {
+		switch len(data) {
+		case 4:
+			bits = uint64(int64(int32(readUint32(data))))
+		case 8:
+			bits = readUint64(data)
+		default:
+			return ErrDecode
+		}
+	}
+	targetValue(value).SetFloat(math.Float64frombits(bits))
+	return nil
+}
+
+func decodeString(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	targetValue(value).SetString(string(data))
+	return nil
+}
+
+func decodeBytes(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	value.SetBytes(append([]byte{}, data...))
+	return nil
+}
+
+func decodeBoolSlice(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, budget *decodeBudget) error {
+	if err := budget.add(len(data)); err != nil {
+		return err
+	}
+	result := reflect.MakeSlice(value.Type(), len(data), len(data))
+	for i, b := range data {
+		result.Index(i).SetBool(b != 0)
+	}
+	value.Set(result)
+	return nil
+}
+
+func decodeIntSlice(_ *uint16, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
+	// 官方接受空内容或仅有宽度前缀的空数组；非空数组必须先校验宽度。
+	if len(data) <= 1 {
+		value.Set(reflect.MakeSlice(value.Type(), 0, 0))
+		return nil
+	}
+	width := int(data[0])
+	data = data[1:]
+	if (width != 4 && width != 8) || len(data)%width != 0 {
+		return ErrDecode
+	}
+	count := len(data) / width
+	if err := budget.add(count); err != nil {
+		return err
+	}
+	result := reflect.MakeSlice(value.Type(), count, count)
+	for i := 0; i < count; i++ {
+		var bits uint64
+		if width == 4 {
+			bits = uint64(int64(int32(readUint32(data[i*width:]))))
+		} else {
+			bits = readUint64(data[i*width:])
+		}
+		if field.Wire == WireDoubleName {
+			result.Index(i).SetFloat(math.Float64frombits(bits))
+		} else if err := setInteger(result.Index(i), bits); err != nil {
+			return err
+		}
+	}
+	value.Set(result)
+	return nil
+}
+
+func decodeStringSlice(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, budget *decodeBudget) error {
+	result := reflect.MakeSlice(value.Type(), 0, 0)
 	for len(data) > 0 {
-		expected, val, err := readChunk(data)
+		used, content, err := readChunk(data)
 		if err != nil {
 			return err
 		}
-		vals = append(vals, string(val))
-		data = data[expected:]
+		if err := budget.add(1); err != nil {
+			return err
+		}
+		result = reflect.Append(result, reflect.ValueOf(string(content)).Convert(value.Type().Elem()))
+		data = data[used:]
 	}
-	v.Set(reflect.ValueOf(vals))
+	value.Set(result)
 	return nil
 }
 
-func decodeStruct(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	// v1: pointer to struct
-	v1 := reflect.New(v.Type().Elem())
-	used, err := decodeMessage(data, sf.st, v1)
+func decodeStruct(_ *uint16, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
+	result := reflect.New(value.Type().Elem())
+	used, err := decodeMessage(data, field.st, result, budget)
 	if err != nil {
 		return err
 	}
 	if used != len(data) {
-		return fmt.Errorf("sproto: malformed struct data for field %s", sf.Name)
+		return ErrDecode
 	}
-	v.Addr().Elem().Set(v1)
+	value.Set(result)
 	return nil
 }
 
-func decodeStructSlice(val *uint16, data []byte, sf *SprotoField, v reflect.Value) error {
-	vals := reflect.MakeSlice(v.Type(), 0, 16)
+func decodeStructSlice(_ *uint16, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
+	result := reflect.MakeSlice(value.Type(), 0, 0)
 	for len(data) > 0 {
-		expected, buf, err := readChunk(data)
+		used, content, err := readChunk(data)
 		if err != nil {
 			return err
 		}
-
-		// v1: pointer to struct
-		v1 := reflect.New(v.Type().Elem().Elem())
-		used, err := decodeMessage(buf, sf.st, v1)
+		if err := budget.add(1); err != nil {
+			return err
+		}
+		current := reflect.New(value.Type().Elem().Elem())
+		consumed, err := decodeMessage(content, field.st, current, budget)
 		if err != nil {
 			return err
 		}
-		if used != len(buf) {
-			return fmt.Errorf("sproto: malformed struct data for field %s", sf.Name)
+		if consumed != len(content) {
+			return ErrDecode
 		}
-		vals = reflect.Append(vals, v1)
-		data = data[expected:]
+		result = reflect.Append(result, current)
+		data = data[used:]
 	}
-	v.Set(vals)
+	value.Set(result)
 	return nil
 }
 
-func decodeHeader(chunk []byte) (int, []Tag, error) {
+func decodeHeader(chunk []byte, budget *decodeBudget) (int, []Tag, error) {
 	if len(chunk) < 2 {
 		return 0, nil, ErrDecode
 	}
-	fn := int(readUint16(chunk))
-	expected := 2 + fn*2
-	if len(chunk) < expected {
+	count := int(readUint16(chunk))
+	end := 2 + count*2
+	if end > len(chunk) {
 		return 0, nil, ErrDecode
 	}
-	tags := make([]Tag, fn)
-	n := 0
-	var tag uint16 = 0
-	for i := 0; i < fn; i++ {
-		v := readUint16(chunk[(i+1)*2:])
-		if v%2 != 0 { //skip tag
-			tag += (v + 1) / 2
+	if err := budget.add(count); err != nil {
+		return 0, nil, err
+	}
+	tags := make([]Tag, 0, count)
+	tag := 0
+	for i := 0; i < count; i++ {
+		entry := int(readUint16(chunk[2+i*2:]))
+		if entry%2 == 1 {
+			tag += (entry + 1) / 2
 			continue
 		}
-		var val *uint16
-		if v != 0 { // value
-			v1 := v/2 - 1
-			val = &v1
+		if tag > 65535 {
+			return 0, nil, ErrDecode
 		}
-		tags[n] = Tag{
-			Tag: tag,
-			Val: val,
+		var inline *uint16
+		if entry != 0 {
+			v := uint16(entry/2 - 1)
+			inline = &v
 		}
+		tags = append(tags, Tag{Tag: uint16(tag), Val: inline})
 		tag++
-		n++
 	}
-	return expected, tags[:n], nil
+	return end, tags, nil
 }
 
-func decodeMessage(chunk []byte, st *SprotoType, v reflect.Value) (int, error) {
-	var total int
-	var tags []Tag
-	var err error
-	if total, tags, err = decodeHeader(chunk); err != nil {
+func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget *decodeBudget) (int, error) {
+	budget.depth++
+	defer func() { budget.depth-- }()
+	if budget.depth > budget.limits.MaxDepth {
+		return 0, ErrLimit
+	}
+	total, tags, err := decodeHeader(chunk, budget)
+	if err != nil {
 		return 0, err
 	}
-
 	for _, tag := range tags {
-		var used int
-		var data []byte
+		var content []byte
 		if tag.Val == nil {
-			if used, data, err = readChunk(chunk[total:]); err != nil {
+			used, data, err := readChunk(chunk[total:])
+			if err != nil {
 				return 0, err
 			}
 			total += used
+			content = data
 		}
-		sf := st.FieldByTag(int(tag.Tag))
-		if sf == nil {
-			fmt.Fprintf(os.Stderr, "sproto<%s>: unknown tag %d\n", st.Name, tag.Tag)
+		field := schema.FieldByTag(int(tag.Tag))
+		if field == nil {
 			continue
 		}
-		v1 := v.Elem().FieldByIndex(sf.index)
-		if err = sf.dec(tag.Val, data, sf, v1); err != nil {
+		if tag.Val != nil && (field.Array || field.Wire == WireBytesName || field.Wire == WireStructName) {
+			return 0, ErrDecode
+		}
+		if err := field.dec(tag.Val, content, field, value.Elem().FieldByIndex(field.index), budget); err != nil {
 			return 0, err
 		}
 	}
 	return total, nil
 }
 
-func Decode(data []byte, sp interface{}) (int, error) {
-	t, v, err := getbase(sp)
-	if err != nil {
-		return 0, err
-	}
-	// clear sp
-	v.Elem().Set(reflect.Zero(t.Elem()))
-	if len(data) == 0 {
-		return 0, nil
-	}
-	st, err := GetSprotoType(t.Elem())
-	if err != nil {
-		return 0, err
-	}
-	return decodeMessage(data, st, v)
+// Decode 解码一个结构体，使用默认有限预算，返回已消费的字节数。
+func Decode(data []byte, message interface{}) (int, error) {
+	return DecodeWithLimits(data, message, Limits{})
 }
 
-func MustDecode(data []byte, sp interface{}) int {
-	n, err := Decode(data, sp)
+// DecodeWithLimits 在递归与分配前检查预算；失败时保留调用方原值。
+func DecodeWithLimits(data []byte, message interface{}, limits Limits) (int, error) {
+	limits, err := normalizeLimits(limits)
+	if err != nil {
+		return 0, err
+	}
+	if len(data) > limits.MaxBytes {
+		return 0, ErrLimit
+	}
+	typ, value, err := getbase(message)
+	if err != nil {
+		return 0, err
+	}
+	schema, err := GetSprotoType(typ.Elem())
+	if err != nil {
+		return 0, err
+	}
+	result := reflect.New(typ.Elem())
+	used, err := decodeMessage(data, schema, result, &decodeBudget{limits: limits})
+	if err != nil {
+		return 0, err
+	}
+	value.Elem().Set(result.Elem())
+	return used, nil
+}
+
+func MustDecode(data []byte, message interface{}) int {
+	used, err := Decode(data, message)
 	if err != nil {
 		panic(err)
 	}
-	return n
+	return used
 }

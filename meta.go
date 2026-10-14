@@ -13,7 +13,8 @@ const (
 	WireVarintName  = "integer" // int, uint, int8, uint8, int16, uint16, int32, uint32, int64, uint64
 	WireBooleanName = "boolean" // bool
 	WireBytesName   = "string"  // string, []byte
-	WireStructName  = "struct"  // struct
+	WireDoubleName  = "double"
+	WireStructName  = "struct" // struct
 )
 
 var (
@@ -23,7 +24,7 @@ var (
 
 type headerEncoder func(st *SprotoField, v reflect.Value) (uint16, bool)
 type encoder func(st *SprotoField, v reflect.Value) []byte
-type decoder func(val *uint16, data []byte, st *SprotoField, v reflect.Value) error
+type decoder func(val *uint16, data []byte, st *SprotoField, v reflect.Value, budget *decodeBudget) error
 
 type SprotoField struct {
 	Name     string
@@ -49,15 +50,15 @@ func (sf *SprotoField) parse(s string) error {
 	}
 	sf.Wire = fields[0]
 	switch sf.Wire {
-	case WireVarintName, WireBooleanName, WireBytesName, WireStructName:
+	case WireVarintName, WireBooleanName, WireBytesName, WireStructName, WireDoubleName:
 	default:
 		return fmt.Errorf("sproto: parse(%s) unknown wire type: %s", s, sf.Wire)
 	}
 
 	var err error
 	sf.Tag, err = strconv.Atoi(fields[1])
-	if err != nil {
-		return fmt.Errorf("sproto: parse(%s) parse tag failed: %s", s, err)
+	if err != nil || sf.Tag < 0 || sf.Tag > 65535 {
+		return fmt.Errorf("sproto: invalid field tag %q", s)
 	}
 
 	for i := 2; i < len(fields); i++ {
@@ -92,6 +93,9 @@ func (sf *SprotoField) setEncAndDec(f *reflect.StructField) error {
 	t1 := f.Type
 	if t1.Kind() == reflect.Ptr {
 		t1 = t1.Elem()
+		if t1.Kind() == reflect.Slice {
+			return fmt.Errorf("sproto: pointer to slice is unsupported")
+		}
 	}
 
 	switch t1.Kind() {
@@ -106,12 +110,20 @@ func (sf *SprotoField) setEncAndDec(f *reflect.StructField) error {
 		sf.enc = encodeInt
 		sf.dec = decodeInt
 		err = sf.assertWire(WireVarintName, false)
+	case reflect.Float64:
+		sf.headerEnc = headerEncodeDefault
+		sf.enc = encodeDouble
+		sf.dec = decodeDouble
+		err = sf.assertWire(WireDoubleName, false)
 	case reflect.String:
 		sf.headerEnc = headerEncodeDefault
 		sf.enc = encodeString
 		sf.dec = decodeString
-		sf.assertWire(WireBytesName, false)
+		err = sf.assertWire(WireBytesName, false)
 	case reflect.Struct:
+		if f.Type.Kind() != reflect.Ptr {
+			return fmt.Errorf("sproto: object field must be a pointer")
+		}
 		stype = t1
 		sf.headerEnc = headerEncodeDefault
 		sf.enc = encodeStruct
@@ -119,6 +131,11 @@ func (sf *SprotoField) setEncAndDec(f *reflect.StructField) error {
 		err = sf.assertWire(WireStructName, false)
 	case reflect.Slice:
 		switch t2 := t1.Elem(); t2.Kind() {
+		case reflect.Float64:
+			sf.headerEnc = headerEncodeDefault
+			sf.enc = encodeDoubleSlice
+			sf.dec = decodeIntSlice
+			err = sf.assertWire(WireDoubleName, true)
 		case reflect.Bool:
 			sf.headerEnc = headerEncodeDefault
 			sf.enc = encodeBoolSlice
@@ -146,7 +163,7 @@ func (sf *SprotoField) setEncAndDec(f *reflect.StructField) error {
 			sf.headerEnc = headerEncodeDefault
 			sf.enc = encodeStringSlice
 			sf.dec = decodeStringSlice
-			sf.assertWire(WireBytesName, true)
+			err = sf.assertWire(WireBytesName, true)
 		case reflect.Ptr:
 			switch t3 := t2.Elem(); t3.Kind() {
 			case reflect.Struct:
@@ -187,6 +204,9 @@ func (sf *SprotoField) init(f *reflect.StructField) error {
 		return nil
 	}
 
+	if f.PkgPath != "" {
+		return fmt.Errorf("sproto: tagged field must be exported")
+	}
 	sf.index = f.Index
 	if err := sf.parse(tagString); err != nil {
 		return err
@@ -220,11 +240,22 @@ func (st *SprotoType) FieldByTag(tag int) *SprotoField {
 }
 
 func GetSprotoType(t reflect.Type) (*SprotoType, error) {
-	if t.Kind() != reflect.Struct {
+	if t == nil || t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("sproto: type must have kind struct")
 	}
 	mutex.Lock()
+	if cached, exists := stMap[t]; exists {
+		mutex.Unlock()
+		return cached, nil
+	}
+	previous := make(map[reflect.Type]*SprotoType, len(stMap))
+	for key, value := range stMap {
+		previous[key] = value
+	}
 	sp, err := getSprotoTypeLocked(t)
+	if err != nil {
+		stMap = previous
+	}
 	mutex.Unlock()
 	return sp, err
 }
