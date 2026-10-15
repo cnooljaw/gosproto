@@ -67,16 +67,17 @@ func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
 		return nil, err
 	}
 	budget := &decodeBudget{limits: limits}
-	size, err := encodedSize(schema, value, budget, 1)
+	var layout encodeLayout
+	size, err := encodedSize(schema, value, budget, 1, &layout)
 	if err != nil {
 		return nil, err
 	}
 	output := make([]byte, size)
-	encodeMessageInto(schema, value, output)
+	encodeMessageInto(schema, value, output, &layout)
 	return output, nil
 }
 
-func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, depth int) (int, error) {
+func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout) (int, error) {
 	if depth > budget.limits.MaxDepth {
 		return 0, ErrLimit
 	}
@@ -84,16 +85,19 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 	if size > budget.limits.MaxBytes {
 		return 0, ErrLimit
 	}
+	layoutIndex := layout.add(0)
 	if value.IsNil() {
 		return size, nil
 	}
+	record := value.Elem()
+	headerCount := 0
 	for _, index := range schema.order {
 		field := schema.Fields[index]
 		if field.Tag < 0 {
 			continue
 		}
-		current := value.Elem().FieldByIndex(field.index)
-		if (current.Kind() == reflect.Ptr || current.Kind() == reflect.Slice) && current.IsNil() {
+		current := record.Field(field.index[0])
+		if omittedField(field, current) {
 			continue
 		}
 		if err := budget.add(1); err != nil {
@@ -105,10 +109,12 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 		}
 		if gap > 0 {
 			size += 2
+			headerCount++
 		}
 		size += 2
+		headerCount++
 		lastTag = field.Tag
-		part, inline, err := fieldSize(field, current, budget, depth)
+		part, inline, err := fieldSize(field, current, budget, depth, layout)
 		if err != nil {
 			return 0, err
 		}
@@ -119,10 +125,11 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 			return 0, ErrLimit
 		}
 	}
+	layout.set(layoutIndex, headerCount)
 	return size, nil
 }
 
-func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, depth int) (int, bool, error) {
+func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout) (int, bool, error) {
 	if field.Array {
 		if err := budget.add(value.Len()); err != nil {
 			return 0, false, err
@@ -130,18 +137,34 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 		size := 0
 		switch field.Wire {
 		case WireVarintName:
+			if field.int64Slice {
+				values := *value.Addr().Interface().(*[]int64)
+				width := 4
+				for _, number := range values {
+					if number < MinInt32 || number > MaxInt32 {
+						width = 8
+						break
+					}
+				}
+				if len(values) > 0 {
+					size = 1 + width*len(values)
+					layout.add(width)
+				}
+				break
+			}
 			width := 4
 			for i := 0; i < value.Len(); i++ {
-				if err := validateInteger(value.Index(i)); err != nil {
-					return 0, false, err
+				bits := integerBits(field, value.Index(i))
+				if field.unsigned && bits > math.MaxInt64 {
+					return 0, false, fmt.Errorf("%w: integer exceeds signed 64-bit range", ErrEncode)
 				}
-				_, current := extractInt(value.Index(i))
-				if current > width {
-					width = current
+				if integerWidth(bits) > width {
+					width = 8
 				}
 			}
 			if value.Len() > 0 {
 				size = 1 + width*value.Len()
+				layout.add(width)
 			}
 		case WireDoubleName:
 			if value.Len() > 0 {
@@ -158,7 +181,7 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 			}
 		case WireStructName:
 			for i := 0; i < value.Len(); i++ {
-				part, err := encodedSize(field.st, value.Index(i), budget, depth+1)
+				part, err := encodedSize(field.st, value.Index(i), budget, depth+1, layout)
 				if err != nil {
 					return 0, false, err
 				}
@@ -174,19 +197,19 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 		return size, false, nil
 	}
 	if field.Wire == WireStructName {
-		size, err := encodedSize(field.st, value, budget, depth+1)
+		size, err := encodedSize(field.st, value, budget, depth+1, layout)
 		return size, false, err
 	}
-	if value.Kind() == reflect.Ptr {
+	if field.pointer {
 		value = value.Elem()
 	}
 	switch field.Wire {
 	case WireVarintName:
-		if err := validateInteger(value); err != nil {
-			return 0, false, err
+		bits := integerBits(field, value)
+		if field.unsigned && bits > math.MaxInt64 {
+			return 0, false, fmt.Errorf("%w: integer exceeds signed 64-bit range", ErrEncode)
 		}
-		bits, width := extractInt(value)
-		return width, bits <= MaxEmbeddedInt, nil
+		return integerWidth(bits), bits <= MaxEmbeddedInt, nil
 	case WireDoubleName:
 		return 8, false, nil
 	case WireBooleanName:
@@ -195,16 +218,6 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 		return value.Len(), false, nil
 	}
 	return 0, false, ErrEncode
-}
-
-func validateInteger(value reflect.Value) error {
-	switch value.Kind() {
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if value.Uint() > math.MaxInt64 {
-			return fmt.Errorf("%w: integer exceeds signed 64-bit range", ErrEncode)
-		}
-	}
-	return nil
 }
 
 // Validate 检查显式预算；零值合法并在编解码时使用默认值。

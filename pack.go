@@ -43,6 +43,27 @@ func writeFF(dst, src []byte, n int) {
 	}
 }
 
+// packWord 先生成精确非零 mask，只复制有效字节；FF 块留到连续范围确定后批量复制。
+func packWord(dst []byte, word uint64, ffN int) int {
+	nonzero := (((word & 0x7f7f7f7f7f7f7f7f) + 0x7f7f7f7f7f7f7f7f) | word) & 0x8080808080808080
+	header := uint8(((nonzero >> 7) * 0x0102040810204080) >> 56)
+	count := bits.OnesCount8(header)
+	if ffN > 0 && count >= 6 {
+		return 8
+	}
+	if count == 8 {
+		return 10
+	}
+	dst[0] = header
+	index := 1
+	for mask := header; mask != 0; mask &= mask - 1 {
+		shift := bits.TrailingZeros8(mask) * 8
+		dst[index] = byte(word >> shift)
+		index++
+	}
+	return index
+}
+
 func Pack(src []byte) []byte {
 	// 每 256 个 word 最多增加一个双字节 FF 头，另保留末尾补齐空间。
 	maxsz := len(src) + ((len(src)+2047)/2048)*2 + 8
@@ -58,14 +79,15 @@ func Pack(src []byte) []byte {
 		} else {
 			input = src
 		}
-		used := 0
-		if ffN > 0 && len(input) == 8 {
+		var used int
+		if len(input) == 8 {
 			word := binary.LittleEndian.Uint64(input)
-			if (word-0x0101010101010101)&^word&0x8080808080808080 == 0 {
+			if ffN > 0 && (word-0x0101010101010101)&^word&0x8080808080808080 == 0 {
 				used = 8
+			} else {
+				used = packWord(packed[offset:], word, ffN)
 			}
-		}
-		if used == 0 {
+		} else {
 			used = packSegment(packed[offset:], input, ffN)
 		}
 		if used == 10 {

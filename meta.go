@@ -33,8 +33,13 @@ type SprotoField struct {
 
 	st *SprotoType // for struct types only
 
-	index []int // index sequence for Value.FieldByIndex
-	dec   decoder
+	index      []int // index sequence for Value.FieldByIndex
+	dec        decoder
+	nilable    bool
+	unsigned   bool
+	pointer    bool
+	valueType  reflect.Type
+	int64Slice bool
 }
 
 // parse filed meta information
@@ -94,69 +99,74 @@ func (sf *SprotoField) configureType(f *reflect.StructField) error {
 		}
 	}
 
+	sf.nilable = f.Type.Kind() == reflect.Ptr || f.Type.Kind() == reflect.Slice
+	sf.pointer = f.Type.Kind() == reflect.Ptr
+	sf.valueType = t1
+	integerType := t1
+	if t1.Kind() == reflect.Slice {
+		integerType = t1.Elem()
+	}
+	sf.unsigned = integerType.Kind() >= reflect.Uint && integerType.Kind() <= reflect.Uint64
 	switch t1.Kind() {
 	case reflect.Bool:
-
 		sf.dec = decodeBool
 		err = sf.assertWire(WireBooleanName, false)
 	case reflect.Int8, reflect.Uint8, reflect.Int16, reflect.Uint16,
 		reflect.Int32, reflect.Uint32, reflect.Int64, reflect.Uint64,
 		reflect.Int, reflect.Uint:
-
 		sf.dec = decodeInt
+		if t1.Kind() == reflect.Int64 {
+			sf.dec = decodeInt64
+			if f.Type == reflect.TypeFor[*int64]() {
+				sf.dec = decodeInt64Pointer
+			}
+		}
 		err = sf.assertWire(WireVarintName, false)
 	case reflect.Float64:
-
 		sf.dec = decodeDouble
 		err = sf.assertWire(WireDoubleName, false)
 	case reflect.String:
-
 		sf.dec = decodeString
+		if f.Type == reflect.TypeFor[*string]() {
+			sf.dec = decodeStringPointer
+		}
 		err = sf.assertWire(WireBytesName, false)
 	case reflect.Struct:
 		if f.Type.Kind() != reflect.Ptr {
 			return fmt.Errorf("sproto: object field must be a pointer")
 		}
 		stype = t1
-
 		sf.dec = decodeStruct
 		err = sf.assertWire(WireStructName, false)
 	case reflect.Slice:
+		sf.int64Slice = t1 == reflect.TypeFor[[]int64]()
 		switch t2 := t1.Elem(); t2.Kind() {
 		case reflect.Float64:
-
 			sf.dec = decodeIntSlice
 			err = sf.assertWire(WireDoubleName, true)
 		case reflect.Bool:
-
 			sf.dec = decodeBoolSlice
 			err = sf.assertWire(WireBooleanName, true)
 		case reflect.Uint8:
-
 			if sf.Wire == WireBytesName {
-
 				sf.dec = decodeBytes
 				err = sf.assertWire(WireBytesName, false)
 			} else {
-
 				sf.dec = decodeIntSlice
 				err = sf.assertWire(WireVarintName, true)
 			}
 		case reflect.Int8, reflect.Int16, reflect.Uint16,
 			reflect.Int32, reflect.Uint32, reflect.Int64, reflect.Uint64,
 			reflect.Int, reflect.Uint:
-
 			sf.dec = decodeIntSlice
 			err = sf.assertWire(WireVarintName, true)
 		case reflect.String:
-
 			sf.dec = decodeStringSlice
 			err = sf.assertWire(WireBytesName, true)
 		case reflect.Ptr:
 			switch t3 := t2.Elem(); t3.Kind() {
 			case reflect.Struct:
 				stype = t2.Elem()
-
 				sf.dec = decodeStructSlice
 				err = sf.assertWire(WireStructName, true)
 			default:
@@ -205,10 +215,12 @@ func (sf *SprotoField) init(f *reflect.StructField) error {
 }
 
 type SprotoType struct {
-	Name   string // struct name
+	typ    reflect.Type // 当前结构体的 Go 类型，用于构造独占子对象。
+	Name   string       // struct name
 	Fields []*SprotoField
 	tagMap map[int]int // tag -> fileds index
 	order  []int       // list of struct field numbers in tag order
+	dense  []int       // 低编号稠密字段的 index+1；零表示未知，长度至多 128。
 }
 
 func (st *SprotoType) Len() int { return len(st.order) }
@@ -220,6 +232,12 @@ func (st *SprotoType) Swap(i, j int) {
 }
 
 func (st *SprotoType) FieldByTag(tag int) *SprotoField {
+	if tag >= 0 && tag < len(st.dense) {
+		if index := st.dense[tag]; index != 0 {
+			return st.Fields[index-1]
+		}
+		return nil
+	}
 	if index, ok := st.tagMap[tag]; ok {
 		return st.Fields[index]
 	}
@@ -252,7 +270,7 @@ func getSprotoTypeLocked(t reflect.Type) (*SprotoType, error) {
 		return st, nil
 	}
 
-	st := new(SprotoType)
+	st := &SprotoType{typ: t}
 	stMap[t] = st
 
 	st.Name = t.Name()
@@ -282,6 +300,28 @@ func getSprotoTypeLocked(t reflect.Type) (*SprotoType, error) {
 
 	// Re-order prop.order
 	sort.Sort(st)
+	covered, denseLength := 0, 0
+	for _, index := range st.order {
+		tag := st.Fields[index].Tag
+		if tag < 0 {
+			continue
+		}
+		if tag >= 128 {
+			break
+		}
+		covered++
+		if tag+1 <= 2*covered {
+			denseLength = tag + 1
+		}
+	}
+	if denseLength > 0 {
+		st.dense = make([]int, denseLength)
+		for tag, index := range st.tagMap {
+			if tag < denseLength {
+				st.dense[tag] = index + 1
+			}
+		}
+	}
 	return st, nil
 }
 

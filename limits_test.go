@@ -91,6 +91,25 @@ func TestInvalidSchemaAndIntegerRange(t *testing.T) {
 	if _, err := sproto.Decode(encoded, &output); err != nil || output != *input {
 		t.Fatalf("unsigned: %+v %v", output, err)
 	}
+	type small int8
+	type unsignedArrays struct {
+		Wide   []uint64 `sproto:"integer,0,array"`
+		Narrow []uint32 `sproto:"integer,1,array"`
+		Signed []small  `sproto:"integer,2,array"`
+	}
+	arrays := &unsignedArrays{Wide: []uint64{0, math.MaxInt64}, Narrow: []uint32{math.MaxUint32}, Signed: []small{-128, 127}}
+	encoded, err = sproto.Encode(arrays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded unsignedArrays
+	if _, err := sproto.Decode(encoded, &decoded); err != nil || !reflect.DeepEqual(arrays, &decoded) {
+		t.Fatalf("integer array types: %+v %v", decoded, err)
+	}
+	arrays.Wide = []uint64{1, math.MaxUint64}
+	if _, err := sproto.Encode(arrays); !errors.Is(err, sproto.ErrEncode) {
+		t.Fatalf("unsigned array wire range: %v", err)
+	}
 }
 
 // 验证字段未定义时能安全跳过，不输出日志或误解后续字段。
@@ -105,6 +124,25 @@ func TestUnknownFieldAndMalformedScalar(t *testing.T) {
 	}
 	if _, err := sproto.Decode(encoded, &flag{}); err == nil {
 		t.Fatal("data field accepted as boolean")
+	}
+	type source struct {
+		Low     int64 `sproto:"integer,0"`
+		Unknown int64 `sproto:"integer,1"`
+		Middle  int64 `sproto:"integer,30000"`
+		High    int64 `sproto:"integer,60000"`
+	}
+	type destination struct {
+		Low    int64 `sproto:"integer,0"`
+		Unused int64 `sproto:"integer,2"`
+		High   int64 `sproto:"integer,60000"`
+	}
+	encoded, err := sproto.Encode(&source{Low: 1, Unknown: 9, Middle: 21, High: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result destination
+	if used, err := sproto.Decode(encoded, &result); err != nil || used != len(encoded) || result != (destination{Low: 1, High: 42}) {
+		t.Fatalf("dense gap and sparse fields: %+v %v", result, err)
 	}
 }
 
@@ -227,9 +265,12 @@ func TestSchemaAndMinimumByteBudget(t *testing.T) {
 	}
 	type text string
 	type texts struct {
-		Values []text `sproto:"string,0,array"`
+		Values []text  `sproto:"string,0,array"`
+		Native *string `sproto:"string,1"`
+		Named  *text   `sproto:"string,2"`
 	}
-	input := &texts{Values: []text{"中文", ""}}
+	nativeText, namedText := "中文🙂", text("")
+	input := &texts{Values: []text{"中文", ""}, Native: &nativeText, Named: &namedText}
 	encoded, err := sproto.Encode(input)
 	if err != nil {
 		t.Fatal(err)
@@ -237,6 +278,71 @@ func TestSchemaAndMinimumByteBudget(t *testing.T) {
 	var output texts
 	if _, err := sproto.Decode(encoded, &output); err != nil || !reflect.DeepEqual(input, &output) {
 		t.Fatalf("named string array: %+v %v", output, err)
+	}
+	type number int64
+	type numbers []number
+	type integerArrays struct {
+		Native        []int64 `sproto:"integer,0,array"`
+		Named         numbers `sproto:"integer,1,array"`
+		NativePointer *int64  `sproto:"integer,2"`
+		NamedPointer  *number `sproto:"integer,3"`
+	}
+	for _, values := range [][]int64{{}, {1, -1, math.MaxInt32}, {1, math.MaxInt64, -1}, {math.MinInt64, 1}} {
+		input := &integerArrays{Native: append([]int64{}, values...), Named: make(numbers, len(values))}
+		for index, value := range values {
+			input.Named[index] = number(value)
+		}
+		var native int64
+		if len(values) > 0 {
+			native = values[0]
+		}
+		named := number(native)
+		input.NativePointer, input.NamedPointer = &native, &named
+		encoded, err := sproto.Encode(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output integerArrays
+		if _, err := sproto.Decode(encoded, &output); err != nil || !reflect.DeepEqual(input, &output) {
+			t.Fatalf("native/named integer arrays: %+v %v", output, err)
+		}
+	}
+}
+
+// 同一对象修改 presence、数组宽度和嵌套数量后，编码必须读取当前值且旧输出保持独占。
+func TestEncodeTracksCurrentValues(t *testing.T) {
+	type child struct {
+		Value *int64 `sproto:"integer,0"`
+	}
+	type document struct {
+		Flag     *bool    `sproto:"boolean,0"`
+		Values   []int64  `sproto:"integer,1,array"`
+		Children []*child `sproto:"struct,3,array"`
+	}
+	flag, number := true, int64(1)
+	input := &document{Flag: &flag, Values: []int64{1, 2}, Children: []*child{{Value: &number}}}
+	first, err := sproto.Encode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := append([]byte(nil), first...)
+	for _, values := range [][]int64{{1, math.MaxInt64, -1}, {}, nil} {
+		input.Flag = nil
+		input.Values = values
+		input.Children = append([]*child{nil, {}, {Value: &number}}, make([]*child, 96)...)
+		encoded, err := sproto.Encode(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output document
+		if _, err := sproto.Decode(encoded, &output); err != nil || !reflect.DeepEqual(input.Values, output.Values) ||
+			output.Flag != nil || len(output.Children) != len(input.Children) || output.Children[0].Value != nil ||
+			output.Children[1].Value != nil || output.Children[2].Value == nil || *output.Children[2].Value != number {
+			t.Fatalf("changed message: %+v %v", output, err)
+		}
+	}
+	if !bytes.Equal(first, snapshot) {
+		t.Fatal("previous encoded output changed")
 	}
 }
 

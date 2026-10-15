@@ -35,9 +35,9 @@ func readChunk(chunk []byte) (int, []byte, error) {
 	return end, chunk[4:end], nil
 }
 
-func targetValue(value reflect.Value) reflect.Value {
-	if value.Kind() == reflect.Ptr {
-		value.Set(reflect.New(value.Type().Elem()))
+func targetValue(field *SprotoField, value reflect.Value) reflect.Value {
+	if field.pointer {
+		value.Set(reflect.New(field.valueType))
 		return value.Elem()
 	}
 	return value
@@ -62,51 +62,78 @@ func setInteger(value reflect.Value, bits uint64) error {
 	return nil
 }
 
-func decodeBool(inline uint16, hasInline bool, _ []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+func decodeBool(inline uint16, hasInline bool, _ []byte, field *SprotoField, value reflect.Value, _ *decodeBudget) error {
 	if !hasInline {
 		return ErrDecode
 	}
-	targetValue(value).SetBool(inline != 0)
+	targetValue(field, value).SetBool(inline != 0)
 	return nil
 }
 
-func decodeInt(inline uint16, hasInline bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
-	var bits uint64
+// scalarBits 解释 inline 或 4/8 字节数值，所有赋值路径共用相同的边界校验。
+func scalarBits(inline uint16, hasInline bool, data []byte) (uint64, error) {
 	if hasInline {
-		bits = uint64(inline)
-	} else {
-		switch len(data) {
-		case 4:
-			bits = uint64(int64(int32(readUint32(data))))
-		case 8:
-			bits = readUint64(data)
-		default:
-			return ErrDecode
-		}
+		return uint64(inline), nil
 	}
-	return setInteger(targetValue(value), bits)
+	switch len(data) {
+	case 4:
+		return uint64(int64(int32(readUint32(data)))), nil
+	case 8:
+		return readUint64(data), nil
+	default:
+		return 0, ErrDecode
+	}
 }
 
-func decodeDouble(inline uint16, hasInline bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
-	var bits uint64
-	if hasInline {
-		bits = uint64(inline)
-	} else {
-		switch len(data) {
-		case 4:
-			bits = uint64(int64(int32(readUint32(data))))
-		case 8:
-			bits = readUint64(data)
-		default:
-			return ErrDecode
-		}
+func decodeInt(inline uint16, hasInline bool, data []byte, field *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	bits, err := scalarBits(inline, hasInline, data)
+	if err != nil {
+		return err
 	}
-	targetValue(value).SetFloat(math.Float64frombits(bits))
+	return setInteger(targetValue(field, value), bits)
+}
+
+// decodeInt64 无需重复查询目标位宽；wire 已保证全部 int64 位模式可表示。
+func decodeInt64(inline uint16, hasInline bool, data []byte, field *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	bits, err := scalarBits(inline, hasInline, data)
+	if err != nil {
+		return err
+	}
+	targetValue(field, value).SetInt(int64(bits))
 	return nil
 }
 
-func decodeString(_ uint16, _ bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
-	targetValue(value).SetString(string(data))
+// decodeInt64Pointer 由 schema 仅绑定到原生 *int64，命名类型继续使用反射兼容路径。
+func decodeInt64Pointer(inline uint16, hasInline bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	bits, err := scalarBits(inline, hasInline, data)
+	if err != nil {
+		return err
+	}
+	result := new(int64)
+	*result = int64(bits)
+	value.Set(reflect.ValueOf(result))
+	return nil
+}
+
+func decodeDouble(inline uint16, hasInline bool, data []byte, field *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	bits, err := scalarBits(inline, hasInline, data)
+	if err != nil {
+		return err
+	}
+	targetValue(field, value).SetFloat(math.Float64frombits(bits))
+	return nil
+}
+
+func decodeString(_ uint16, _ bool, data []byte, field *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	targetValue(field, value).SetString(string(data))
+	return nil
+}
+
+// decodeStringPointer 对原生 *string 直接构造独占值，命名类型仍由通用路径处理。
+func decodeStringPointer(_ uint16, _ bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	result := new(string)
+	*result = string(data)
+	value.Set(reflect.ValueOf(result))
 	return nil
 }
 
@@ -130,6 +157,10 @@ func decodeBoolSlice(_ uint16, _ bool, data []byte, _ *SprotoField, value reflec
 func decodeIntSlice(_ uint16, _ bool, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
 	// 官方接受空内容或仅有宽度前缀的空数组；非空数组必须先校验宽度。
 	if len(data) <= 1 {
+		if field.int64Slice {
+			*value.Addr().Interface().(*[]int64) = []int64{}
+			return nil
+		}
 		value.Set(reflect.MakeSlice(value.Type(), 0, 0))
 		return nil
 	}
@@ -141,6 +172,20 @@ func decodeIntSlice(_ uint16, _ bool, data []byte, field *SprotoField, value ref
 	count := len(data) / width
 	if err := budget.add(count); err != nil {
 		return err
+	}
+	if field.int64Slice {
+		result := make([]int64, count)
+		if width == 4 {
+			for index := range result {
+				result[index] = int64(int32(readUint32(data[index*4:])))
+			}
+		} else {
+			for index := range result {
+				result[index] = int64(readUint64(data[index*8:]))
+			}
+		}
+		*value.Addr().Interface().(*[]int64) = result
+		return nil
 	}
 	result := reflect.MakeSlice(value.Type(), count, count)
 	for i := 0; i < count; i++ {
@@ -196,7 +241,7 @@ func decodeStringSlice(_ uint16, _ bool, data []byte, _ *SprotoField, value refl
 }
 
 func decodeStruct(_ uint16, _ bool, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
-	result := reflect.New(value.Type().Elem())
+	result := reflect.New(field.valueType)
 	used, err := decodeMessage(data, field.st, result, budget)
 	if err != nil {
 		return err
@@ -219,7 +264,7 @@ func decodeStructSlice(_ uint16, _ bool, data []byte, field *SprotoField, value 
 		if err != nil {
 			return err
 		}
-		current := reflect.New(value.Type().Elem().Elem())
+		current := reflect.New(field.st.typ)
 		consumed, err := decodeMessage(content, field.st, current, budget)
 		if err != nil {
 			return err
@@ -251,6 +296,7 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 	if err := budget.add(count); err != nil {
 		return 0, err
 	}
+	record := value.Elem()
 	tag := 0
 	for index := 0; index < count; index++ {
 		entry := int(readUint16(chunk[2+index*2:]))
@@ -280,7 +326,7 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 		if hasInline && (field.Array || field.Wire == WireBytesName || field.Wire == WireStructName) {
 			return 0, ErrDecode
 		}
-		if err := field.dec(inline, hasInline, content, field, value.Elem().FieldByIndex(field.index), budget); err != nil {
+		if err := field.dec(inline, hasInline, content, field, record.Field(field.index[0]), budget); err != nil {
 			return 0, err
 		}
 	}

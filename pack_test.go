@@ -45,6 +45,7 @@ var packTestCases []*PackTestCase = []*PackTestCase{
 	},
 }
 
+// Pack 保持官方固定向量及所有八字节 mask 的位序和原始字节。
 func TestPack(t *testing.T) {
 	for _, tc := range packTestCases {
 		packed := Pack(tc.Origin)
@@ -52,6 +53,24 @@ func TestPack(t *testing.T) {
 			t.Log("packed:", packed)
 			t.Log("expected:", tc.Packed)
 			t.Fatalf("test case *%s* failed", tc.Name)
+		}
+	}
+	for mask := 0; mask < 256; mask++ {
+		for _, nonzero := range []byte{1, 0x7f, 0x80, 0xff} {
+			raw := make([]byte, 8)
+			want := []byte{byte(mask)}
+			if mask == 255 {
+				want = append(want, 0)
+			}
+			for index := range raw {
+				if mask&(1<<index) != 0 {
+					raw[index] = nonzero
+					want = append(want, nonzero)
+				}
+			}
+			if packed := Pack(raw); !bytes.Equal(packed, want) {
+				t.Fatalf("mask=%02x value=%02x: %x != %x", mask, nonzero, packed, want)
+			}
 		}
 	}
 }
