@@ -67,11 +67,13 @@ func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
 		return nil, err
 	}
 	budget := &decodeBudget{limits: limits}
-	_, err = encodedSize(schema, value, budget, 1)
+	size, err := encodedSize(schema, value, budget, 1)
 	if err != nil {
 		return nil, err
 	}
-	return encodeMessage(schema, value), nil
+	output := make([]byte, size)
+	encodeMessageInto(schema, value, output)
+	return output, nil
 }
 
 func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, depth int) (int, error) {

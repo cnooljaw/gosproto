@@ -22,9 +22,7 @@ var (
 	stMap = make(map[reflect.Type]*SprotoType)
 )
 
-type headerEncoder func(st *SprotoField, v reflect.Value) (uint16, bool)
-type encoder func(st *SprotoField, v reflect.Value) []byte
-type decoder func(val *uint16, data []byte, st *SprotoField, v reflect.Value, budget *decodeBudget) error
+type decoder func(inline uint16, hasInline bool, data []byte, st *SprotoField, v reflect.Value, budget *decodeBudget) error
 
 type SprotoField struct {
 	Name     string
@@ -35,10 +33,8 @@ type SprotoField struct {
 
 	st *SprotoType // for struct types only
 
-	index     []int // index sequence for Value.FieldByIndex
-	headerEnc headerEncoder
-	enc       encoder
-	dec       decoder
+	index []int // index sequence for Value.FieldByIndex
+	dec   decoder
 }
 
 // parse filed meta information
@@ -87,7 +83,7 @@ func (sf *SprotoField) assertWire(expectedWire string, expectedArray bool) error
 	return nil
 }
 
-func (sf *SprotoField) setEncAndDec(f *reflect.StructField) error {
+func (sf *SprotoField) configureType(f *reflect.StructField) error {
 	var stype reflect.Type
 	var err error
 	t1 := f.Type
@@ -100,24 +96,21 @@ func (sf *SprotoField) setEncAndDec(f *reflect.StructField) error {
 
 	switch t1.Kind() {
 	case reflect.Bool:
-		sf.headerEnc = headerEncodeBool
+
 		sf.dec = decodeBool
 		err = sf.assertWire(WireBooleanName, false)
 	case reflect.Int8, reflect.Uint8, reflect.Int16, reflect.Uint16,
 		reflect.Int32, reflect.Uint32, reflect.Int64, reflect.Uint64,
 		reflect.Int, reflect.Uint:
-		sf.headerEnc = headerEncodeInt
-		sf.enc = encodeInt
+
 		sf.dec = decodeInt
 		err = sf.assertWire(WireVarintName, false)
 	case reflect.Float64:
-		sf.headerEnc = headerEncodeDefault
-		sf.enc = encodeDouble
+
 		sf.dec = decodeDouble
 		err = sf.assertWire(WireDoubleName, false)
 	case reflect.String:
-		sf.headerEnc = headerEncodeDefault
-		sf.enc = encodeString
+
 		sf.dec = decodeString
 		err = sf.assertWire(WireBytesName, false)
 	case reflect.Struct:
@@ -125,51 +118,45 @@ func (sf *SprotoField) setEncAndDec(f *reflect.StructField) error {
 			return fmt.Errorf("sproto: object field must be a pointer")
 		}
 		stype = t1
-		sf.headerEnc = headerEncodeDefault
-		sf.enc = encodeStruct
+
 		sf.dec = decodeStruct
 		err = sf.assertWire(WireStructName, false)
 	case reflect.Slice:
 		switch t2 := t1.Elem(); t2.Kind() {
 		case reflect.Float64:
-			sf.headerEnc = headerEncodeDefault
-			sf.enc = encodeDoubleSlice
+
 			sf.dec = decodeIntSlice
 			err = sf.assertWire(WireDoubleName, true)
 		case reflect.Bool:
-			sf.headerEnc = headerEncodeDefault
-			sf.enc = encodeBoolSlice
+
 			sf.dec = decodeBoolSlice
 			err = sf.assertWire(WireBooleanName, true)
 		case reflect.Uint8:
-			sf.headerEnc = headerEncodeDefault
+
 			if sf.Wire == WireBytesName {
-				sf.enc = encodeBytes
+
 				sf.dec = decodeBytes
 				err = sf.assertWire(WireBytesName, false)
 			} else {
-				sf.enc = encodeIntSlice
+
 				sf.dec = decodeIntSlice
 				err = sf.assertWire(WireVarintName, true)
 			}
 		case reflect.Int8, reflect.Int16, reflect.Uint16,
 			reflect.Int32, reflect.Uint32, reflect.Int64, reflect.Uint64,
 			reflect.Int, reflect.Uint:
-			sf.headerEnc = headerEncodeDefault
-			sf.enc = encodeIntSlice
+
 			sf.dec = decodeIntSlice
 			err = sf.assertWire(WireVarintName, true)
 		case reflect.String:
-			sf.headerEnc = headerEncodeDefault
-			sf.enc = encodeStringSlice
+
 			sf.dec = decodeStringSlice
 			err = sf.assertWire(WireBytesName, true)
 		case reflect.Ptr:
 			switch t3 := t2.Elem(); t3.Kind() {
 			case reflect.Struct:
 				stype = t2.Elem()
-				sf.headerEnc = headerEncodeDefault
-				sf.enc = encodeStructSlice
+
 				sf.dec = decodeStructSlice
 				err = sf.assertWire(WireStructName, true)
 			default:
@@ -211,7 +198,7 @@ func (sf *SprotoField) init(f *reflect.StructField) error {
 	if err := sf.parse(tagString); err != nil {
 		return err
 	}
-	if err := sf.setEncAndDec(f); err != nil {
+	if err := sf.configureType(f); err != nil {
 		return err
 	}
 	return nil

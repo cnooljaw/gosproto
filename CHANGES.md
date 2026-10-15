@@ -1,3 +1,10 @@
+# 未发布
+
+- 解码直接遍历有界头部并按值传递 inline，结构体/字符串数组预检后一次分配，保留失败原子性与 optional presence。
+- 编码使用资源预算预检得到的确切尺寸，一次分配最终输出，嵌套结构和数组直接写入子区间。
+- Pack 为完整非零 word 避免重复搬移，并收紧输出预留；Unpack 在有界长度预检后一次分配，保留截断、padding 和最大输出检查。
+- 公开 API、默认资源预算及官方 wire 不变；未引入 unsafe、对象池或代码生成。
+
 # v0.3.0（2026-10-15）
 
 - 精简协议库职责：删除 Service/Call 网络 helper、TCP 分帧、反射方法注册、MethodName/MatchMethod/GetProtocolByMethod 及旧 TCP 示例，保留编解码、Packing 和原生 RPC。

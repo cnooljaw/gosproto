@@ -62,18 +62,18 @@ func setInteger(value reflect.Value, bits uint64) error {
 	return nil
 }
 
-func decodeBool(inline *uint16, _ []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
-	if inline == nil {
+func decodeBool(inline uint16, hasInline bool, _ []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+	if !hasInline {
 		return ErrDecode
 	}
-	targetValue(value).SetBool(*inline != 0)
+	targetValue(value).SetBool(inline != 0)
 	return nil
 }
 
-func decodeInt(inline *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+func decodeInt(inline uint16, hasInline bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
 	var bits uint64
-	if inline != nil {
-		bits = uint64(*inline)
+	if hasInline {
+		bits = uint64(inline)
 	} else {
 		switch len(data) {
 		case 4:
@@ -87,10 +87,10 @@ func decodeInt(inline *uint16, data []byte, _ *SprotoField, value reflect.Value,
 	return setInteger(targetValue(value), bits)
 }
 
-func decodeDouble(inline *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+func decodeDouble(inline uint16, hasInline bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
 	var bits uint64
-	if inline != nil {
-		bits = uint64(*inline)
+	if hasInline {
+		bits = uint64(inline)
 	} else {
 		switch len(data) {
 		case 4:
@@ -105,17 +105,17 @@ func decodeDouble(inline *uint16, data []byte, _ *SprotoField, value reflect.Val
 	return nil
 }
 
-func decodeString(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+func decodeString(_ uint16, _ bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
 	targetValue(value).SetString(string(data))
 	return nil
 }
 
-func decodeBytes(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
+func decodeBytes(_ uint16, _ bool, data []byte, _ *SprotoField, value reflect.Value, _ *decodeBudget) error {
 	value.SetBytes(append([]byte{}, data...))
 	return nil
 }
 
-func decodeBoolSlice(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, budget *decodeBudget) error {
+func decodeBoolSlice(_ uint16, _ bool, data []byte, _ *SprotoField, value reflect.Value, budget *decodeBudget) error {
 	if err := budget.add(len(data)); err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func decodeBoolSlice(_ *uint16, data []byte, _ *SprotoField, value reflect.Value
 	return nil
 }
 
-func decodeIntSlice(_ *uint16, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
+func decodeIntSlice(_ uint16, _ bool, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
 	// 官方接受空内容或仅有宽度前缀的空数组；非空数组必须先校验宽度。
 	if len(data) <= 1 {
 		value.Set(reflect.MakeSlice(value.Type(), 0, 0))
@@ -160,24 +160,42 @@ func decodeIntSlice(_ *uint16, data []byte, field *SprotoField, value reflect.Va
 	return nil
 }
 
-func decodeStringSlice(_ *uint16, data []byte, _ *SprotoField, value reflect.Value, budget *decodeBudget) error {
-	result := reflect.MakeSlice(value.Type(), 0, 0)
+// countChunks 在任何数组分配前检查完整边界和元素预算。
+func countChunks(data []byte, budget *decodeBudget) (int, error) {
+	count := 0
 	for len(data) > 0 {
+		used, _, err := readChunk(data)
+		if err != nil {
+			return 0, err
+		}
+		if err := budget.add(1); err != nil {
+			return 0, err
+		}
+		count++
+		data = data[used:]
+	}
+	return count, nil
+}
+
+func decodeStringSlice(_ uint16, _ bool, data []byte, _ *SprotoField, value reflect.Value, budget *decodeBudget) error {
+	count, err := countChunks(data, budget)
+	if err != nil {
+		return err
+	}
+	result := reflect.MakeSlice(value.Type(), count, count)
+	for index := 0; index < count; index++ {
 		used, content, err := readChunk(data)
 		if err != nil {
 			return err
 		}
-		if err := budget.add(1); err != nil {
-			return err
-		}
-		result = reflect.Append(result, reflect.ValueOf(string(content)).Convert(value.Type().Elem()))
+		result.Index(index).SetString(string(content))
 		data = data[used:]
 	}
 	value.Set(result)
 	return nil
 }
 
-func decodeStruct(_ *uint16, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
+func decodeStruct(_ uint16, _ bool, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
 	result := reflect.New(value.Type().Elem())
 	used, err := decodeMessage(data, field.st, result, budget)
 	if err != nil {
@@ -190,14 +208,15 @@ func decodeStruct(_ *uint16, data []byte, field *SprotoField, value reflect.Valu
 	return nil
 }
 
-func decodeStructSlice(_ *uint16, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
-	result := reflect.MakeSlice(value.Type(), 0, 0)
-	for len(data) > 0 {
+func decodeStructSlice(_ uint16, _ bool, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
+	count, err := countChunks(data, budget)
+	if err != nil {
+		return err
+	}
+	result := reflect.MakeSlice(value.Type(), count, count)
+	for index := 0; index < count; index++ {
 		used, content, err := readChunk(data)
 		if err != nil {
-			return err
-		}
-		if err := budget.add(1); err != nil {
 			return err
 		}
 		current := reflect.New(value.Type().Elem().Elem())
@@ -208,45 +227,11 @@ func decodeStructSlice(_ *uint16, data []byte, field *SprotoField, value reflect
 		if consumed != len(content) {
 			return ErrDecode
 		}
-		result = reflect.Append(result, current)
+		result.Index(index).Set(current)
 		data = data[used:]
 	}
 	value.Set(result)
 	return nil
-}
-
-func decodeHeader(chunk []byte, budget *decodeBudget) (int, []Tag, error) {
-	if len(chunk) < 2 {
-		return 0, nil, ErrDecode
-	}
-	count := int(readUint16(chunk))
-	end := 2 + count*2
-	if end > len(chunk) {
-		return 0, nil, ErrDecode
-	}
-	if err := budget.add(count); err != nil {
-		return 0, nil, err
-	}
-	tags := make([]Tag, 0, count)
-	tag := 0
-	for i := 0; i < count; i++ {
-		entry := int(readUint16(chunk[2+i*2:]))
-		if entry%2 == 1 {
-			tag += (entry + 1) / 2
-			continue
-		}
-		if tag > 65535 {
-			return 0, nil, ErrDecode
-		}
-		var inline *uint16
-		if entry != 0 {
-			v := uint16(entry/2 - 1)
-			inline = &v
-		}
-		tags = append(tags, Tag{Tag: uint16(tag), Val: inline})
-		tag++
-	}
-	return end, tags, nil
 }
 
 func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget *decodeBudget) (int, error) {
@@ -255,13 +240,31 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 	if budget.depth > budget.limits.MaxDepth {
 		return 0, ErrLimit
 	}
-	total, tags, err := decodeHeader(chunk, budget)
-	if err != nil {
+	if len(chunk) < 2 {
+		return 0, ErrDecode
+	}
+	count := int(readUint16(chunk))
+	total := 2 + count*2
+	if total > len(chunk) {
+		return 0, ErrDecode
+	}
+	if err := budget.add(count); err != nil {
 		return 0, err
 	}
-	for _, tag := range tags {
+	tag := 0
+	for index := 0; index < count; index++ {
+		entry := int(readUint16(chunk[2+index*2:]))
+		if entry%2 == 1 {
+			tag += (entry + 1) / 2
+			continue
+		}
+		if tag > 65535 {
+			return 0, ErrDecode
+		}
+		hasInline := entry != 0
+		inline := uint16(entry/2 - 1)
 		var content []byte
-		if tag.Val == nil {
+		if !hasInline {
 			used, data, err := readChunk(chunk[total:])
 			if err != nil {
 				return 0, err
@@ -269,14 +272,15 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 			total += used
 			content = data
 		}
-		field := schema.FieldByTag(int(tag.Tag))
+		field := schema.FieldByTag(tag)
+		tag++
 		if field == nil {
 			continue
 		}
-		if tag.Val != nil && (field.Array || field.Wire == WireBytesName || field.Wire == WireStructName) {
+		if hasInline && (field.Array || field.Wire == WireBytesName || field.Wire == WireStructName) {
 			return 0, ErrDecode
 		}
-		if err := field.dec(tag.Val, content, field, value.Elem().FieldByIndex(field.index), budget); err != nil {
+		if err := field.dec(inline, hasInline, content, field, value.Elem().FieldByIndex(field.index), budget); err != nil {
 			return 0, err
 		}
 	}

@@ -1,6 +1,12 @@
 package sproto
 
+import (
+	"encoding/binary"
+	"math/bits"
+)
+
 func packSegment(dst []byte, src []byte, ffN int) int {
+
 	var header uint8 = 0
 	notzero := 0
 	for i, v := range src {
@@ -38,8 +44,8 @@ func writeFF(dst, src []byte, n int) {
 }
 
 func Pack(src []byte) []byte {
-	// the worst-case space overhead of packing is 2 bytes per 16 bytes of input
-	maxsz := len(src) + ((len(src)+2047)/2048)*100 + 2
+	// 每 256 个 word 最多增加一个双字节 FF 头，另保留末尾补齐空间。
+	maxsz := len(src) + ((len(src)+2047)/2048)*2 + 8
 	packed := make([]byte, maxsz, maxsz)
 	offset := 0
 
@@ -52,7 +58,16 @@ func Pack(src []byte) []byte {
 		} else {
 			input = src
 		}
-		used := packSegment(packed[offset:], input, ffN)
+		used := 0
+		if ffN > 0 && len(input) == 8 {
+			word := binary.LittleEndian.Uint64(input)
+			if (word-0x0101010101010101)&^word&0x8080808080808080 == 0 {
+				used = 8
+			}
+		}
+		if used == 0 {
+			used = packSegment(packed[offset:], input, ffN)
+		}
 		if used == 10 {
 			ffS = src
 			ffP = offset
@@ -92,45 +107,45 @@ func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 	if maxBytes < 1 {
 		return nil, ErrInvalidLimits
 	}
-	unpacked := make([]byte, 0, min(len(src), maxBytes))
-	buf := make([]byte, 8)
-	for len(src) > 0 {
-		sz := len(src)
-		used := 0
-		header := src[0]
+	// 首次只扫描 tag/连续块长度，在分配前确认完整边界及有限的确切输出长度。
+	size := 0
+	for remaining := src; len(remaining) > 0; {
+		header := remaining[0]
+		consumed, produced := 1+bits.OnesCount8(header), 8
 		if header == 0xff {
-			if sz < 2 {
+			if len(remaining) < 2 {
 				return nil, ErrUnpack
 			}
-			used = 2 + (int(src[1])+1)*8
-			if sz < used {
-				return nil, ErrUnpack
-			}
-			if used-2 > maxBytes-len(unpacked) {
-				return nil, ErrLimit
-			}
-			unpacked = append(unpacked, src[2:used]...)
-		} else {
-			notzero := 0
-			for i := 0; i < 8; i++ {
-				if header%2 == 1 {
-					notzero++
-					if sz < notzero+1 {
-						return nil, ErrUnpack
-					}
-					buf[i] = src[notzero]
-				} else {
-					buf[i] = 0
-				}
-				header = header >> 1
-			}
-			used = notzero + 1
-			if 8 > maxBytes-len(unpacked) {
-				return nil, ErrLimit
-			}
-			unpacked = append(unpacked, buf...)
+			produced = (int(remaining[1]) + 1) * 8
+			consumed = 2 + produced
 		}
-		src = src[used:]
+		if consumed > len(remaining) {
+			return nil, ErrUnpack
+		}
+		if produced > maxBytes-size {
+			return nil, ErrLimit
+		}
+		size += produced
+		remaining = remaining[consumed:]
+	}
+	unpacked := make([]byte, size)
+	offset := 0
+	for len(src) > 0 {
+		header := src[0]
+		src = src[1:]
+		if header == 0xff {
+			length := (int(src[0]) + 1) * 8
+			copy(unpacked[offset:], src[1:1+length])
+			offset += length
+			src = src[1+length:]
+			continue
+		}
+		for mask := header; mask != 0; mask &= mask - 1 {
+			index := bits.TrailingZeros8(mask)
+			unpacked[offset+index] = src[0]
+			src = src[1:]
+		}
+		offset += 8
 	}
 	return unpacked, nil
 }

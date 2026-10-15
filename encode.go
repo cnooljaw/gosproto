@@ -37,60 +37,6 @@ func writeUint64(buf []byte, v uint64) {
 	buf[7] = uint8((v >> 56) & 0xff)
 }
 
-func headerEncodeDefault(sf *SprotoField, v reflect.Value) (uint16, bool) {
-	if !v.IsValid() {
-		return 0, true
-	}
-	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice:
-		if v.IsNil() {
-			return 0, true
-		}
-	}
-	return 0, false
-}
-
-func headerEncodeBool(sf *SprotoField, v reflect.Value) (uint16, bool) {
-	if !v.IsValid() {
-		return 0, true
-	}
-	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice:
-		if v.IsNil() {
-			return 0, true
-		}
-	}
-	var n uint16 = 0
-	if v.Elem().Bool() {
-		n = 1
-	}
-	return 2 * (n + 1), false
-}
-
-func headerEncodeInt(sf *SprotoField, v reflect.Value) (uint16, bool) {
-	if !v.IsValid() {
-		return 0, true
-	}
-	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice:
-		if v.IsNil() {
-			return 0, true
-		}
-	}
-
-	var n uint64
-	switch e := v.Elem(); e.Kind() {
-	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
-		n = uint64(e.Int())
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uint:
-		n = e.Uint()
-	}
-	if n <= MaxEmbeddedInt {
-		return uint16(2 * (n + 1)), false
-	}
-	return 0, false
-}
-
 func extractInt(v reflect.Value) (n uint64, sz int) {
 	switch v.Kind() {
 	case reflect.Int8, reflect.Int16, reflect.Int32:
@@ -118,179 +64,169 @@ func extractInt(v reflect.Value) (n uint64, sz int) {
 	return
 }
 
-func encodeInt(sf *SprotoField, v reflect.Value) []byte {
-	n, sz := extractInt(v.Elem())
-	if n <= MaxEmbeddedInt {
-		return nil
+// inlineHeader 只读取已经过预算和类型检查的字段，不分配中间结果。
+func inlineHeader(field *SprotoField, value reflect.Value) (uint16, bool) {
+	if field.Array {
+		return 0, false
 	}
-
-	buf := make([]byte, sz)
-	if sz == 4 {
-		writeUint32(buf, uint32(n))
-	} else {
-		writeUint64(buf, n)
+	if value.Kind() == reflect.Ptr && field.Wire != WireStructName {
+		value = value.Elem()
 	}
-	return buf
-}
-
-func encodeString(sf *SprotoField, v reflect.Value) []byte {
-	str := v.Elem().String()
-	buf := make([]byte, len(str))
-	copy(buf, str)
-	return buf
-}
-
-func encodeBytes(sf *SprotoField, v reflect.Value) []byte {
-	bytes := v.Bytes()
-	buf := make([]byte, len(bytes))
-	copy(buf, bytes)
-	return buf
-}
-
-func encodeStruct(sf *SprotoField, v reflect.Value) []byte {
-	return encodeMessage(sf.st, v)
-}
-
-func encodeBoolSlice(sf *SprotoField, v reflect.Value) []byte {
-	sz := v.Len()
-	buf := make([]byte, sz)
-	offset := 0
-	for i := 0; i < sz; i++ {
-		if v.Index(i).Bool() {
-			buf[offset+i] = 1
-		} else {
-			buf[offset+i] = 0
+	switch field.Wire {
+	case WireBooleanName:
+		if value.Bool() {
+			return 4, true
+		}
+		return 2, true
+	case WireVarintName:
+		bits, _ := extractInt(value)
+		if bits <= MaxEmbeddedInt {
+			return uint16((bits + 1) * 2), true
 		}
 	}
-	return buf
+	return 0, false
 }
 
-func encodeStringSlice(sf *SprotoField, v reflect.Value) []byte {
-	var sz int
-	for i := 0; i < v.Len(); i++ {
-		str := v.Index(i).String()
-		sz += 4 + len(str)
-	}
-	buf := make([]byte, sz)
-	offset := 0
-	for i := 0; i < v.Len(); i++ {
-		str := v.Index(i).String()
-		strLen := len(str)
-		writeUint32(buf[offset:], uint32(strLen))
-		copy(buf[offset+4:], str)
-		offset += 4 + strLen
-	}
-	return buf
-}
-
-func encodeIntSlice(sf *SprotoField, v reflect.Value) []byte {
-	if v.Len() == 0 {
-		return []byte{}
-	}
-	vals := make([]uint64, v.Len())
-	var intLen int = 4 // could be 4 and 8
-	for i := 0; i < v.Len(); i++ {
-		n, tmp := extractInt(v.Index(i))
-		if tmp > intLen {
-			intLen = tmp
-		}
-		vals[i] = n
-	}
-
-	buf := make([]byte, 1+intLen*v.Len())
-	buf[0] = uint8(intLen) // put intLen
-	offset := 1
-	for _, val := range vals {
-		if intLen == 4 {
-			writeUint32(buf[offset:], uint32(val))
-		} else {
-			writeUint64(buf[offset:], val)
-		}
-		offset += intLen
-	}
-	return buf
-}
-
-func encodeStructSlice(sf *SprotoField, v reflect.Value) []byte {
-	sz := 0
-	vals := make([][]byte, v.Len())
-	for i := 0; i < v.Len(); i++ {
-		val := encodeMessage(sf.st, v.Index(i))
-		vals[i] = val
-		sz += len(val) + 4
-	}
-
-	buf := make([]byte, sz)
-	offset := 0
-	for _, val := range vals {
-		valLen := len(val)
-		writeUint32(buf[offset:], uint32(valLen))
-		copy(buf[offset+4:], val)
-		offset += valLen + 4
-	}
-	return buf
+func omittedField(value reflect.Value) bool {
+	return (value.Kind() == reflect.Ptr || value.Kind() == reflect.Slice) && value.IsNil()
 }
 
 func skipTag(tag, nextTag int) uint16 {
 	if nextTag > tag+1 {
-		span := nextTag - tag - 1
-		return uint16((span-1)*2 + 1)
+		return uint16((nextTag-tag-2)*2 + 1)
 	}
 	return 0
 }
 
-func encodeHeaders(headers []uint16, reserved int) []byte {
-	buf := make([]byte, (len(headers)+1)*2+reserved)
-	i := 0
-	writeUint16(buf, uint16(len(headers)))
-	i = i + 2
-	for _, v := range headers {
-		writeUint16(buf[i:], v)
-		i = i + 2
+// encodeMessageInto 将子结构直接写入同一个已验证尺寸的输出区间。
+func encodeMessageInto(schema *SprotoType, value reflect.Value, output []byte) int {
+	if value.IsNil() {
+		writeUint16(output, 0)
+		return 2
 	}
-	return buf[:i]
+	count, previous := 0, -1
+	for _, index := range schema.order {
+		field := schema.Fields[index]
+		if field.Tag < 0 {
+			continue
+		}
+		current := value.Elem().FieldByIndex(field.index)
+		if omittedField(current) {
+			continue
+		}
+		if skip := skipTag(previous, field.Tag); skip > 0 {
+			writeUint16(output[2+count*2:], skip)
+			count++
+		}
+		header, _ := inlineHeader(field, current)
+		writeUint16(output[2+count*2:], header)
+		count++
+		previous = field.Tag
+	}
+	writeUint16(output, uint16(count))
+	offset := 2 + count*2
+	for _, index := range schema.order {
+		field := schema.Fields[index]
+		if field.Tag < 0 {
+			continue
+		}
+		current := value.Elem().FieldByIndex(field.index)
+		if omittedField(current) {
+			continue
+		}
+		if _, inline := inlineHeader(field, current); inline {
+			continue
+		}
+		length := encodeFieldInto(field, current, output[offset+4:])
+		writeUint32(output[offset:], uint32(length))
+		offset += 4 + length
+	}
+	return offset
 }
 
-func encodeMessage(st *SprotoType, v reflect.Value) []byte {
-	headers := make([]uint16, len(st.Fields)*2)   // max header len is fieldNum * 2
-	buffer := make([]byte, EncodeBufferSize)[0:0] // pre-allocate 4k buffer
-
-	tag, offset := -1, 0
-	dataLen := make([]byte, 4, 4)
-	if !v.IsNil() { // struct could be nil in struct array
-		for _, i := range st.order {
-			sf := st.Fields[i]
-			v1 := v.Elem().FieldByIndex(sf.index)
-			nextTag := sf.Tag
-			if nextTag < 0 {
-				continue
-			}
-			if v1.Kind() != reflect.Ptr &&
-				v1.Kind() != reflect.Slice &&
-				v1.Kind() != reflect.Array &&
-				v1.Kind() != reflect.Struct {
-				// 替内部处理取地址
-				v1 = v1.Addr()
-			}
-			if header, isNil := sf.headerEnc(sf, v1); !isNil {
-				if skip := skipTag(tag, nextTag); skip > 0 {
-					headers[offset] = skip
-					offset++
-				}
-				headers[offset] = header
-				offset++
-				tag = nextTag
-				if sf.enc != nil {
-					if data := sf.enc(sf, v1); data != nil {
-						writeUint32(dataLen, uint32(len(data)))
-						buffer = Append(buffer, dataLen)
-						buffer = Append(buffer, data)
+func encodeFieldInto(field *SprotoField, value reflect.Value, output []byte) int {
+	if field.Array {
+		if value.Len() == 0 {
+			return 0
+		}
+		offset := 0
+		switch field.Wire {
+		case WireVarintName:
+			width := 4
+			for index := 0; index < value.Len(); index++ {
+				bits, currentWidth := extractInt(value.Index(index))
+				if width == 4 && currentWidth == 8 {
+					// 只在首个宽值出现时升级一次；从后向前扩展，避免覆盖未搬移的 word。
+					for previous := index - 1; previous >= 0; previous-- {
+						signed := int64(int32(readUint32(output[1+previous*4:])))
+						writeUint64(output[1+previous*8:], uint64(signed))
 					}
+					width = 8
 				}
+				if width == 4 {
+					writeUint32(output[1+index*width:], uint32(bits))
+				} else {
+					writeUint64(output[1+index*width:], bits)
+				}
+			}
+			output[0] = byte(width)
+			offset = 1 + width*value.Len()
+		case WireDoubleName:
+			output[0] = 8
+			offset = 1
+			for index := 0; index < value.Len(); index++ {
+				writeUint64(output[offset:], math.Float64bits(value.Index(index).Float()))
+				offset += 8
+			}
+		case WireBooleanName:
+			for index := 0; index < value.Len(); index++ {
+				if value.Index(index).Bool() {
+					output[index] = 1
+				} else {
+					output[index] = 0
+				}
+			}
+			offset = value.Len()
+		case WireBytesName:
+			for index := 0; index < value.Len(); index++ {
+				text := value.Index(index).String()
+				writeUint32(output[offset:], uint32(len(text)))
+				offset += 4 + copy(output[offset+4:], text)
+			}
+		case WireStructName:
+			for index := 0; index < value.Len(); index++ {
+				length := encodeMessageInto(field.st, value.Index(index), output[offset+4:])
+				writeUint32(output[offset:], uint32(length))
+				offset += 4 + length
 			}
 		}
+		return offset
 	}
-	return Append(encodeHeaders(headers[:offset], len(buffer)), buffer)
+	if field.Wire == WireStructName {
+		return encodeMessageInto(field.st, value, output)
+	}
+	if value.Kind() == reflect.Ptr {
+		value = value.Elem()
+	}
+	switch field.Wire {
+	case WireVarintName:
+		bits, width := extractInt(value)
+		if width == 4 {
+			writeUint32(output, uint32(bits))
+		} else {
+			writeUint64(output, bits)
+		}
+		return width
+	case WireDoubleName:
+		writeUint64(output, math.Float64bits(value.Float()))
+		return 8
+	case WireBytesName:
+		if value.Kind() == reflect.String {
+			return copy(output, value.String())
+		}
+		return copy(output, value.Bytes())
+	}
+	return 0
 }
 
 // Encode 使用默认有限预算编码结构体。
@@ -298,28 +234,11 @@ func Encode(sp interface{}) ([]byte, error) {
 	return EncodeWithLimits(sp, Limits{})
 }
 
+// MustEncode 在输入不能编码时 panic，适用于静态且已确认合法的数据。
 func MustEncode(sp interface{}) []byte {
-	d, err := Encode(sp)
+	encoded, err := Encode(sp)
 	if err != nil {
 		panic(err)
 	}
-	return d
-}
-
-func encodeDouble(_ *SprotoField, value reflect.Value) []byte {
-	buffer := make([]byte, 8)
-	writeUint64(buffer, math.Float64bits(value.Elem().Float()))
-	return buffer
-}
-
-func encodeDoubleSlice(_ *SprotoField, value reflect.Value) []byte {
-	if value.Len() == 0 {
-		return []byte{}
-	}
-	buffer := make([]byte, 1+8*value.Len())
-	buffer[0] = 8
-	for i := 0; i < value.Len(); i++ {
-		writeUint64(buffer[1+i*8:], math.Float64bits(value.Index(i).Float()))
-	}
-	return buffer
+	return encoded
 }
