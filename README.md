@@ -7,7 +7,7 @@ Go 实现的 [Sproto](https://github.com/cloudwu/sproto) 编解码库，支持�
 需要 Go 1.24 或更高版本。
 
 ```sh
-go get github.com/cnooljaw/gosproto@v0.3.0
+go get github.com/cnooljaw/gosproto@v0.4.0
 ```
 
 ## 快速开始
