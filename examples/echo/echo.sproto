@@ -1,0 +1,9 @@
+.package {
+    type 0 : integer
+    session 1 : integer
+}
+
+echo 1 {
+    request { text 0 : string }
+    response { text 0 : string }
+}

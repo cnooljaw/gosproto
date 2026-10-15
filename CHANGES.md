@@ -1,3 +1,14 @@
+# v0.3.0（2026-10-15）
+
+- 精简协议库职责：删除 Service/Call 网络 helper、TCP 分帧、反射方法注册、MethodName/MatchMethod/GetProtocolByMethod 及旧 TCP 示例，保留编解码、Packing 和原生 RPC。
+- 修复 Pack 连续 256 块且末尾不足八字节时的越界读取，避免填充混入原缓冲数据或 panic，并保留 fuzz 失败输入。
+- 修正 UnpackWithLimit：预算只约束解包后含填充的长度，等于预算时允许接纳，初始分配不会按无界输入大小预留。
+- NewRpc 对 nil 协议定义返回可判断的 ErrUnknownProtocol，避免空指针 panic。
+- 补充精确预算、字段演进、double 特殊位模式、RPC 非法输入和连接隔离测试；扩展官方 C/Lua 集合/嵌套/稀疏字段及 packing 对照，三个 fuzz 入口纳入 CI。
+- README 统一为使用指南，新增不联网的 Echo 字节往返示例，移除旧性能数字与新旧文档拼接。
+
+升级说明：本版本收缩了源码 API，不提供已删除 helper 或方法绑定的兼容别名。调用方自行管理连接、调度、Handler 和超时；旧生成模板需剔除 Protocol.MethodName。Sproto wire 格式保持不变。
+
 # v0.2.0
 
 本版本是以 xjdrew/gosproto v0.1.0（ec7216542bfa5c334cc7021fb0b21d10b7463bca）为基线的独立修复版本。模块路径为 github.com/cnooljaw/gosproto，保留上游历史与 MIT 许可证。

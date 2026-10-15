@@ -26,6 +26,8 @@ func packSegment(dst []byte, src []byte, ffN int) int {
 }
 
 func writeFF(dst, src []byte, n int) {
+	// 最后一个连续块可能不足八字节，不能读取切片长度之外的底层容量。
+	n = min(n, len(src))
 	align8 := (n + 7) & (^7)
 	dst[0] = 0xff
 	dst[1] = uint8(align8/8 - 1)
@@ -85,15 +87,12 @@ func Unpack(src []byte) ([]byte, error) {
 	return UnpackWithLimit(src, 8<<20)
 }
 
-// UnpackWithLimit 在扩容前限制解包大小。
+// UnpackWithLimit 在扩容前限制解包后含填充的长度；packed 输入大小由调用方限制。
 func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 	if maxBytes < 1 {
 		return nil, ErrInvalidLimits
 	}
-	if len(src) > maxBytes {
-		return nil, ErrLimit
-	}
-	unpacked := make([]byte, 0, len(src))
+	unpacked := make([]byte, 0, min(len(src), maxBytes))
 	buf := make([]byte, 8)
 	for len(src) > 0 {
 		sz := len(src)

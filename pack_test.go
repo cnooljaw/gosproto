@@ -2,6 +2,8 @@ package sproto
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -77,5 +79,59 @@ func TestUnpack(t *testing.T) {
 		t.Log("unpacked:", unpacked)
 		t.Log("expected:", allUnpacked)
 		t.Fatal("test case *total* failed")
+	}
+}
+
+// 验证预算只计算解包后含填充的长度，等于预算时允许接纳，超过预算时拒绝。
+func TestUnpackOutputBudget(t *testing.T) {
+	for _, source := range [][]byte{
+		bytes.Repeat([]byte{1}, 8),
+		bytes.Repeat([]byte{0}, 8),
+		{1, 0, 2},
+		bytes.Repeat([]byte{1}, 2048),
+	} {
+		packed := Pack(source)
+		expected := append([]byte{}, source...)
+		expected = append(expected, make([]byte, (8-len(source)%8)%8)...)
+		output, err := UnpackWithLimit(packed, len(expected))
+		if err != nil || !bytes.Equal(output, expected) {
+			t.Fatalf("exact budget=%d packed=%d output=%x error=%v", len(expected), len(packed), output, err)
+		}
+		if _, err := UnpackWithLimit(packed, len(expected)-1); !errors.Is(err, ErrLimit) {
+			t.Fatalf("short budget: %v", err)
+		}
+	}
+	if _, err := UnpackWithLimit(nil, 0); !errors.Is(err, ErrInvalidLimits) {
+		t.Fatalf("invalid budget: %v", err)
+	}
+	for _, malformed := range [][]byte{{255}, {255, 0, 1}, {1}, {128}} {
+		if _, err := UnpackWithLimit(malformed, 32); !errors.Is(err, ErrUnpack) {
+			t.Fatalf("truncated %x: %v", malformed, err)
+		}
+	}
+}
+
+// 验证连续块达到 256 块边界且最后只有 6/7 字节时，不越界读取并正确补零。
+func TestPackPartialRunAtBlockLimit(t *testing.T) {
+	for _, length := range []int{2046, 2047, 2048, 2049, 4094, 4095, 4096} {
+		t.Run(fmt.Sprint(length), func(t *testing.T) {
+			for _, extraCapacity := range []int{0, 16} {
+				source := make([]byte, length, length+extraCapacity)
+				backing := source[:cap(source)]
+				for index := range backing {
+					backing[index] = 0xee
+				}
+				for index := range source {
+					source[index] = 1
+				}
+				packed := Pack(source)
+				output, err := Unpack(packed)
+				expected := append([]byte{}, source...)
+				expected = append(expected, make([]byte, (8-length%8)%8)...)
+				if err != nil || !bytes.Equal(output, expected) {
+					t.Fatalf("partial run: source=%d extraCapacity=%d output=%d error=%v", length, extraCapacity, len(output), err)
+				}
+			}
+		})
 	}
 }

@@ -21,4 +21,7 @@ jobs:
           SPROTO_ORACLE_DIR="$RUNNER_TEMP/sproto-oracle" go test -race ./... -timeout=2m
           go vet ./...
       - name: Bounded fuzz
-        run: go test -run '^$' -fuzz '^FuzzDecode$' -fuzztime=30s -parallel=2
+        run: |
+          for target in FuzzDecode FuzzPackRoundTrip FuzzCodecRoundTrip; do
+            go test -run '^$' -fuzz "^${target}$" -fuzztime=30s -parallel=2 || exit 1
+          done

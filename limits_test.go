@@ -194,12 +194,19 @@ func FuzzDecode(f *testing.F) {
 		data, _ := hex.DecodeString(seed)
 		f.Add(data)
 	}
+	seed, err := sproto.Encode(makeFuzzDocument([]byte{3, 1, 255}, 0x7ff8000000000042))
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(seed)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 4096 {
 			return
 		}
 		var output numeric
 		_, _ = sproto.DecodeWithLimits(data, &output, sproto.Limits{MaxBytes: 4096, MaxDepth: 8, MaxElements: 128})
+		var recursive fuzzDocument
+		_, _ = sproto.DecodeWithLimits(data, &recursive, sproto.Limits{MaxBytes: 4096, MaxDepth: 8, MaxElements: 128})
 		_, _ = sproto.UnpackWithLimit(data, 4096)
 	})
 }
@@ -230,5 +237,131 @@ func TestSchemaAndMinimumByteBudget(t *testing.T) {
 	var output texts
 	if _, err := sproto.Decode(encoded, &output); err != nil || !reflect.DeepEqual(input, &output) {
 		t.Fatalf("named string array: %+v %v", output, err)
+	}
+}
+
+// 验证字节、深度和元素预算恰好到边界时通过，少一个额度时失败且不改目标。
+func TestCodecBudgetBoundaries(t *testing.T) {
+	type text struct {
+		Value string `sproto:"string,0"`
+	}
+	input := &text{Value: "ab"}
+	encoded, err := sproto.EncodeWithLimits(input, sproto.Limits{MaxBytes: 10})
+	if err != nil || len(encoded) != 10 {
+		t.Fatalf("exact encode byte limit: %x %v", encoded, err)
+	}
+	if _, err := sproto.EncodeWithLimits(input, sproto.Limits{MaxBytes: 9}); !errors.Is(err, sproto.ErrLimit) {
+		t.Fatalf("short encode byte limit: %v", err)
+	}
+	var output text
+	if _, err := sproto.DecodeWithLimits(encoded, &output, sproto.Limits{MaxBytes: 10}); err != nil || output != *input {
+		t.Fatalf("exact decode byte limit: %+v %v", output, err)
+	}
+	output.Value = "original"
+	if _, err := sproto.DecodeWithLimits(encoded, &output, sproto.Limits{MaxBytes: 9}); !errors.Is(err, sproto.ErrLimit) || output.Value != "original" {
+		t.Fatalf("short decode byte limit: %+v %v", output, err)
+	}
+	value := &tree{Next: &tree{}}
+	encoded, err = sproto.EncodeWithLimits(value, sproto.Limits{MaxDepth: 2})
+	if err != nil {
+		t.Fatalf("exact encode depth: %v", err)
+	}
+	var decoded tree
+	if _, err := sproto.DecodeWithLimits(encoded, &decoded, sproto.Limits{MaxDepth: 2}); err != nil || !reflect.DeepEqual(value, &decoded) {
+		t.Fatalf("exact decode depth: %+v %v", decoded, err)
+	}
+	if _, err := sproto.EncodeWithLimits(value, sproto.Limits{MaxDepth: 1}); !errors.Is(err, sproto.ErrLimit) {
+		t.Fatalf("short encode depth: %v", err)
+	}
+	if _, err := sproto.DecodeWithLimits(encoded, &decoded, sproto.Limits{MaxDepth: 1}); !errors.Is(err, sproto.ErrLimit) {
+		t.Fatalf("short decode depth: %v", err)
+	}
+	type list struct {
+		Values []int64 `sproto:"integer,0,array"`
+	}
+	items := &list{Values: []int64{-1, 2}}
+	encoded, err = sproto.EncodeWithLimits(items, sproto.Limits{MaxElements: 3})
+	if err != nil {
+		t.Fatalf("exact encode elements: %v", err)
+	}
+	var decodedList list
+	if _, err := sproto.DecodeWithLimits(encoded, &decodedList, sproto.Limits{MaxElements: 3}); err != nil || !reflect.DeepEqual(items, &decodedList) {
+		t.Fatalf("exact decode elements: %+v %v", decodedList, err)
+	}
+	if _, err := sproto.EncodeWithLimits(items, sproto.Limits{MaxElements: 2}); !errors.Is(err, sproto.ErrLimit) {
+		t.Fatalf("short encode elements: %v", err)
+	}
+	if _, err := sproto.DecodeWithLimits(encoded, &decodedList, sproto.Limits{MaxElements: 2}); !errors.Is(err, sproto.ErrLimit) {
+		t.Fatalf("short decode elements: %v", err)
+	}
+	for _, limits := range []sproto.Limits{{MaxBytes: -1}, {MaxDepth: 129}, {MaxElements: -1}} {
+		if err := limits.Validate(); !errors.Is(err, sproto.ErrInvalidLimits) {
+			t.Fatalf("invalid limits: %+v %v", limits, err)
+		}
+	}
+}
+
+// 验证未知 inline、数据和嵌套字段可跳过，保留后续字段，新增缺失字段回到零值。
+func TestSchemaEvolution(t *testing.T) {
+	type nested struct {
+		Value string `sproto:"string,0"`
+	}
+	type newer struct {
+		ID       int64     `sproto:"integer,0"`
+		Inline   int64     `sproto:"integer,1"`
+		Data     []byte    `sproto:"string,2"`
+		Nested   *nested   `sproto:"struct,3"`
+		Children []*nested `sproto:"struct,4,array"`
+		Tail     string    `sproto:"string,5"`
+	}
+	type older struct {
+		ID   int64  `sproto:"integer,0"`
+		Tail string `sproto:"string,5"`
+	}
+	input := &newer{ID: -1, Inline: 7, Data: []byte{0, 255}, Nested: &nested{Value: "new"}, Children: []*nested{{Value: "child"}}, Tail: "kept"}
+	encoded, err := sproto.Encode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old older
+	used, err := sproto.Decode(encoded, &old)
+	if err != nil || used != len(encoded) || old.ID != input.ID || old.Tail != input.Tail {
+		t.Fatalf("new to old: %+v consumed=%d error=%v", old, used, err)
+	}
+	encoded, err = sproto.Encode(&old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := *input
+	if _, err := sproto.Decode(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ID != old.ID || decoded.Tail != old.Tail || decoded.Inline != 0 || decoded.Data != nil || decoded.Nested != nil || decoded.Children != nil {
+		t.Fatalf("old to new left stale fields: %+v", decoded)
+	}
+}
+
+// 验证正负零、最小非正规数、无穷和不同 NaN payload 在标量、指针与数组中保留位模式。
+func TestDoubleBitPatterns(t *testing.T) {
+	type floats struct {
+		Scalar  float64   `sproto:"double,0"`
+		Pointer *float64  `sproto:"double,1"`
+		Values  []float64 `sproto:"double,2,array"`
+	}
+	patterns := []uint64{0, 1 << 63, 1, 0x8000000000000001, 0x7fefffffffffffff, 0x7ff0000000000000, 0xfff0000000000000, 0x7ff8000000000001, 0x7ff8000000000042, 0x7ff0000000000001}
+	for _, bits := range patterns {
+		value := math.Float64frombits(bits)
+		input := &floats{Scalar: value, Pointer: &value, Values: []float64{value}}
+		encoded, err := sproto.Encode(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output floats
+		if _, err := sproto.Decode(encoded, &output); err != nil {
+			t.Fatal(err)
+		}
+		if output.Pointer == nil || len(output.Values) != 1 || math.Float64bits(output.Scalar) != bits || math.Float64bits(*output.Pointer) != bits || math.Float64bits(output.Values[0]) != bits {
+			t.Fatalf("double bits changed: %016x -> %+v", bits, output)
+		}
 	}
 }
