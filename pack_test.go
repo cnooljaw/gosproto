@@ -87,6 +87,12 @@ func TestPack(t *testing.T) {
 			if packed := Pack(source); !bytes.Equal(packed, expected) {
 				t.Fatalf("FF mask=%02x value=%02x: %x != %x", mask, nonzero, packed, expected)
 			}
+			// 扩大输入以进入长 FF 扫描；遇零所在的 word 仍按上面的独立预期处理。
+			longSource := append(append([]byte{}, source...), make([]byte, 256)...)
+			longExpected := append(append([]byte{}, expected...), make([]byte, 32)...)
+			if packed := Pack(longSource); !bytes.Equal(packed, longExpected) {
+				t.Fatalf("long FF mask=%02x value=%02x: %x != %x", mask, nonzero, packed, longExpected)
+			}
 			// 解包直接使用独立构造的官方 mask 字节，避免只验证自身往返。
 			unpacked, err := Unpack(want)
 			if err != nil || !bytes.Equal(unpacked, raw) {

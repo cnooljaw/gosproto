@@ -1,6 +1,7 @@
 package sproto
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math/bits"
 )
@@ -95,6 +96,16 @@ func packWord(dst []byte, word uint64, ffN int) int {
 	return index
 }
 
+// followingFFWords 只在已确认的 FF 起点后搜索，最多接纳 255 个完整非零 word。
+// 含零 word 和不足八字节的尾部不计入，继续交给普通 FF 合并逻辑。
+func followingFFWords(src []byte) int {
+	available := min(2040, len(src)) &^ 7
+	if zero := bytes.IndexByte(src[:available], 0); zero >= 0 {
+		return zero / 8
+	}
+	return available / 8
+}
+
 func Pack(src []byte) []byte {
 	// 每 256 个 word 最多增加一个双字节 FF 头，另保留末尾补齐空间。
 	maxsz := len(src) + ((len(src)+2047)/2048)*2 + 8
@@ -104,28 +115,33 @@ func Pack(src []byte) []byte {
 	var ffS []byte
 	var ffN, ffP int
 	for len(src) > 0 {
-		var input []byte
-		if len(src) >= 8 {
-			input = src[:8]
-		} else {
-			input = src
-		}
 		var used int
-		if len(input) == 8 {
-			word := binary.LittleEndian.Uint64(input)
+		if len(src) >= 8 {
+			word := binary.LittleEndian.Uint64(src)
 			if ffN > 0 && (word-0x0101010101010101)&^word&0x8080808080808080 == 0 {
 				used = 8
 			} else {
 				used = packWord(packed[offset:], word, ffN)
 			}
 		} else {
-			used = packSegment(packed[offset:], input, ffN)
+			used = packSegment(packed[offset:], src, ffN)
 		}
 		if ffN == 0 {
 			if used == 10 {
 				ffS = src
 				ffP = offset
 				ffN = 1
+				// 只在已确认的长 FF 起点批量搜索；遇零所在的 word 留给原合并规则。
+				if len(src) >= 256 {
+					words := followingFFWords(src[8:])
+					ffN += words
+					used += words * 8
+					src = src[words*8:]
+					if ffN == 256 {
+						writeFF(packed[ffP:], ffS, 2048)
+						ffN = 0
+					}
+				}
 			}
 		} else if used == 8 {
 			ffN++
