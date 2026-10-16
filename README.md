@@ -108,6 +108,8 @@ if err != nil {
 
 `UnpackWithLimit` 先检查完整 packed 边界与有限输出长度，再一次分配输出。当前实现的 maxBytes 只约束解包后含填充的长度，等于预算时允许接纳；packed 输入上限由连接或调用方另行设置。Pack 的输入由调用方限制；不应直接对无界输入调用 Pack。
 
+Pack 返回独占输出，不在调用间保留工作缓冲；FF 连续块按官方规则合并，wire 与尾部填充保持兼容。
+
 ## RPC
 
 RPC 消息使用 Sproto 原生 package：

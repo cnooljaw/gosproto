@@ -43,24 +43,55 @@ func writeFF(dst, src []byte, n int) {
 	}
 }
 
-// packWord 先生成精确非零 mask，只复制有效字节；FF 块留到连续范围确定后批量复制。
+// packWord 对稀疏 word 只复制有效字节，混合 word 固定位写出；FF 块仍批量复制。
 func packWord(dst []byte, word uint64, ffN int) int {
 	nonzero := (((word & 0x7f7f7f7f7f7f7f7f) + 0x7f7f7f7f7f7f7f7f) | word) & 0x8080808080808080
 	header := uint8(((nonzero >> 7) * 0x0102040810204080) >> 56)
-	count := bits.OnesCount8(header)
-	if ffN > 0 && count >= 6 {
-		return 8
-	}
-	if count == 8 {
+	if header == 0xff {
+		if ffN > 0 {
+			return 8
+		}
 		return 10
 	}
-	dst[0] = header
-	index := 1
-	for mask := header; mask != 0; mask &= mask - 1 {
-		shift := bits.TrailingZeros8(mask) * 8
-		dst[index] = byte(word >> shift)
-		index++
+	if ffN > 0 {
+		zero := ^header
+		remaining := zero & (zero - 1)
+		if remaining&(remaining-1) == 0 {
+			return 8
+		}
 	}
+	// 去掉至多两个置位后是否为零，比普通路径完整计数更直接。
+	remaining := header & (header - 1)
+	if remaining&(remaining-1) == 0 {
+		dst[0] = header
+		index := 1
+		for mask := header; mask != 0; mask &= mask - 1 {
+			shift := bits.TrailingZeros8(mask) * 8
+			dst[index] = byte(word >> shift)
+			index++
+		}
+		return index
+	}
+	// Pack 预留八字节尾空间，零字节暂写的位置会被下一个有效字节覆盖，不进入返回切片。
+	_ = dst[8]
+	index := 1
+	dst[index] = byte(word)
+	index += int(header & 1)
+	dst[index] = byte(word >> 8)
+	index += int((header >> 1) & 1)
+	dst[index] = byte(word >> 16)
+	index += int((header >> 2) & 1)
+	dst[index] = byte(word >> 24)
+	index += int((header >> 3) & 1)
+	dst[index] = byte(word >> 32)
+	index += int((header >> 4) & 1)
+	dst[index] = byte(word >> 40)
+	index += int((header >> 5) & 1)
+	dst[index] = byte(word >> 48)
+	index += int((header >> 6) & 1)
+	dst[index] = byte(word >> 56)
+	index += int((header >> 7) & 1)
+	dst[0] = header
 	return index
 }
 
@@ -90,21 +121,21 @@ func Pack(src []byte) []byte {
 		} else {
 			used = packSegment(packed[offset:], input, ffN)
 		}
-		if used == 10 {
-			ffS = src
-			ffP = offset
-			ffN = 1
-		} else if used == 8 && ffN > 0 {
-			ffN += 1
+		if ffN == 0 {
+			if used == 10 {
+				ffS = src
+				ffP = offset
+				ffN = 1
+			}
+		} else if used == 8 {
+			ffN++
 			if ffN == 256 {
 				writeFF(packed[ffP:], ffS, ffN*8)
 				ffN = 0
 			}
 		} else {
-			if ffN > 0 {
-				writeFF(packed[ffP:], ffS, ffN*8)
-				ffN = 0
-			}
+			writeFF(packed[ffP:], ffS, ffN*8)
+			ffN = 0
 		}
 		offset += used
 		if len(src) <= 8 {

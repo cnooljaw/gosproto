@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/bits"
 	"testing"
 )
 
@@ -70,6 +71,21 @@ func TestPack(t *testing.T) {
 			}
 			if packed := Pack(raw); !bytes.Equal(packed, want) {
 				t.Fatalf("mask=%02x value=%02x: %x != %x", mask, nonzero, packed, want)
+			}
+			// 同一 mask 接在 FF 后时，六/七个非零字节必须合并，五个则结束连续段。
+			full := bytes.Repeat([]byte{nonzero}, 8)
+			tail := []byte{1, 2, 3, 4, 5, 0, 0, 0}
+			source := append(append(append([]byte{}, full...), raw...), tail...)
+			expected := []byte{0xff, 0}
+			if bits.OnesCount8(byte(mask)) >= 6 {
+				expected[1] = 1
+				expected = append(append(expected, full...), raw...)
+			} else {
+				expected = append(append(expected, full...), want...)
+			}
+			expected = append(expected, 0x1f, 1, 2, 3, 4, 5)
+			if packed := Pack(source); !bytes.Equal(packed, expected) {
+				t.Fatalf("FF mask=%02x value=%02x: %x != %x", mask, nonzero, packed, expected)
 			}
 			// 解包直接使用独立构造的官方 mask 字节，避免只验证自身往返。
 			unpacked, err := Unpack(want)
