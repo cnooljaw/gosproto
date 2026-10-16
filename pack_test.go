@@ -147,6 +147,30 @@ func TestUnpackOutputBudget(t *testing.T) {
 			t.Fatalf("short budget: %v", err)
 		}
 	}
+	// 连续零 mask 在机器字邻域跳跃后，预算与迟到坏帧的错误优先级仍按输入顺序决定。
+	for _, words := range []int{1, 2, 3, 7, 8, 9, 15, 16, 17, 511, 512, 513} {
+		prefix := make([]byte, words)
+		valid := append(append([]byte{}, prefix...), 1, 0xff)
+		want := make([]byte, (words+1)*8)
+		want[words*8] = 0xff
+		output, err := UnpackWithLimit(valid, len(want))
+		if err != nil || !bytes.Equal(output, want) {
+			t.Fatalf("zero masks=%d output=%x error=%v", words, output, err)
+		}
+		if output, err := UnpackWithLimit(valid, len(want)-1); output != nil || !errors.Is(err, ErrLimit) {
+			t.Fatalf("zero short budget=%d output=%x error=%v", words, output, err)
+		}
+		malformed := append(append([]byte{}, prefix...), 0xff)
+		for _, limit := range []int{words*8 - 1, words * 8, words*8 + 8} {
+			wantErr := ErrUnpack
+			if limit < words*8 {
+				wantErr = ErrLimit
+			}
+			if output, err := UnpackWithLimit(malformed, limit); output != nil || !errors.Is(err, wantErr) {
+				t.Fatalf("zero masks=%d limit=%d output=%x error=%v want=%v", words, limit, output, err, wantErr)
+			}
+		}
+	}
 	if _, err := UnpackWithLimit(nil, 0); !errors.Is(err, ErrInvalidLimits) {
 		t.Fatalf("invalid budget: %v", err)
 	}

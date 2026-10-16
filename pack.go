@@ -166,6 +166,23 @@ func Pack(src []byte) []byte {
 	return packed[:offset]
 }
 
+// zeroHeaderPrefix 按有效切片长度统计连续零 mask，遇到首个非零字节立即停止。
+// 调用方只在已确认的零段后使用；预检传入的范围另受剩余输出预算限制。
+func zeroHeaderPrefix(src []byte) int {
+	index := 0
+	for len(src)-index >= 8 {
+		word := binary.LittleEndian.Uint64(src[index:])
+		if word != 0 {
+			return index + bits.TrailingZeros64(word)/8
+		}
+		index += 8
+	}
+	for index < len(src) && src[index] == 0 {
+		index++
+	}
+	return index
+}
+
 // Unpack 使用默认解包大小预算。
 func Unpack(src []byte) ([]byte, error) {
 	return UnpackWithLimit(src, 8<<20)
@@ -180,13 +197,29 @@ func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 	size := 0
 	for remaining := src; len(remaining) > 0; {
 		header := remaining[0]
-		consumed, produced := 1+bits.OnesCount8(header), 8
-		if header == 0xff {
+		consumed, produced := 1, 8
+		if header == 0 {
+			if len(remaining) >= 2 && remaining[1] == 0 {
+				words := (maxBytes - size) / 8
+				if words < 2 {
+					return nil, ErrLimit
+				}
+				// 多检查一个零 mask 即可判定超额，不为小预算扫描整段大输入。
+				end := min(len(remaining), words+1)
+				run := 2 + zeroHeaderPrefix(remaining[2:end])
+				if run > words {
+					return nil, ErrLimit
+				}
+				consumed, produced = run, run*8
+			}
+		} else if header == 0xff {
 			if len(remaining) < 2 {
 				return nil, ErrUnpack
 			}
 			produced = (int(remaining[1]) + 1) * 8
 			consumed = 2 + produced
+		} else {
+			consumed += bits.OnesCount8(header)
 		}
 		if consumed > len(remaining) {
 			return nil, ErrUnpack
@@ -201,6 +234,16 @@ func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 	offset := 0
 	for len(src) > 0 {
 		header := src[0]
+		if header == 0 {
+			run := 1
+			if len(src) >= 2 && src[1] == 0 {
+				run = 2 + zeroHeaderPrefix(src[2:])
+			}
+			// 输出由本次 make 清零，已预检的零段只需推进游标。
+			offset += run * 8
+			src = src[run:]
+			continue
+		}
 		src = src[1:]
 		if header == 0xff {
 			length := (int(src[0]) + 1) * 8
@@ -209,10 +252,15 @@ func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 			src = src[1+length:]
 			continue
 		}
-		for mask := header; mask != 0; mask &= mask - 1 {
+		// 零 mask 已在上方消费，普通 mask 至少有一个有效字节。
+		for mask := header; ; {
 			index := bits.TrailingZeros8(mask)
 			unpacked[offset+index] = src[0]
 			src = src[1:]
+			mask &= mask - 1
+			if mask == 0 {
+				break
+			}
 		}
 		offset += 8
 	}
