@@ -309,6 +309,41 @@ func TestSchemaAndMinimumByteBudget(t *testing.T) {
 	}
 }
 
+// 原生指针字段即使输入共用同一个指针，解码后的各字段及不同调用仍各自独占。
+func TestNativePointerDecodeOwnership(t *testing.T) {
+	type pointers struct {
+		FirstInt   *int64  `sproto:"integer,0"`
+		SecondInt  *int64  `sproto:"integer,1"`
+		FirstText  *string `sproto:"string,2"`
+		SecondText *string `sproto:"string,3"`
+	}
+	number, text := int64(-42), "中文🙂"
+	input := &pointers{
+		FirstInt: &number, SecondInt: &number,
+		FirstText: &text, SecondText: &text,
+	}
+	wire, err := sproto.Encode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first, second pointers
+	for _, output := range []*pointers{&first, &second} {
+		if _, err := sproto.Decode(wire, output); err != nil || !reflect.DeepEqual(output, input) {
+			t.Fatalf("decode pointers: %+v %v", output, err)
+		}
+		if output.FirstInt == output.SecondInt || output.FirstText == output.SecondText {
+			t.Fatal("decoded fields share mutable pointers")
+		}
+	}
+	if first.FirstInt == second.FirstInt || first.FirstText == second.FirstText {
+		t.Fatal("decode calls share mutable pointers")
+	}
+	*first.FirstInt, *first.FirstText = 99, "changed"
+	if *first.SecondInt != number || *first.SecondText != text || !reflect.DeepEqual(&second, input) {
+		t.Fatal("changing one result mutated another field or decode call")
+	}
+}
+
 // 同一对象修改 presence、数组宽度和嵌套数量后，编码必须读取当前值且旧输出保持独占。
 func TestEncodeTracksCurrentValues(t *testing.T) {
 	type child struct {

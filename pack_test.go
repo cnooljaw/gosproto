@@ -45,7 +45,7 @@ var packTestCases []*PackTestCase = []*PackTestCase{
 	},
 }
 
-// Pack 保持官方固定向量及所有八字节 mask 的位序和原始字节。
+// Pack/Unpack 保持官方固定向量及所有八字节 mask 的位序和原始字节。
 func TestPack(t *testing.T) {
 	for _, tc := range packTestCases {
 		packed := Pack(tc.Origin)
@@ -70,6 +70,11 @@ func TestPack(t *testing.T) {
 			}
 			if packed := Pack(raw); !bytes.Equal(packed, want) {
 				t.Fatalf("mask=%02x value=%02x: %x != %x", mask, nonzero, packed, want)
+			}
+			// 解包直接使用独立构造的官方 mask 字节，避免只验证自身往返。
+			unpacked, err := Unpack(want)
+			if err != nil || !bytes.Equal(unpacked, raw) {
+				t.Fatalf("unpack mask=%02x value=%02x: %x != %x, %v", mask, nonzero, unpacked, raw, err)
 			}
 		}
 	}

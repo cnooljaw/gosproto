@@ -15,9 +15,10 @@ const (
 
 // encodeLayout 只属于一次 Encode 调用，记录每个结构体的头项数和非空整数数组宽度。
 // 小消息使用栈内记录；额外记录的数量由同一次预检的字段/元素预算约束。
+// 每项只存头项数（tag 范围内至多 131072）或数组宽度 4/8，uint32 足够且不依赖机器字长。
 type encodeLayout struct {
-	local  [32]int
-	extra  []int
+	local  [32]uint32
+	extra  []uint32
 	count  int
 	cursor int
 }
@@ -25,12 +26,12 @@ type encodeLayout struct {
 func (layout *encodeLayout) add(value int) int {
 	index := layout.count
 	if index < len(layout.local) {
-		layout.local[index] = value
+		layout.local[index] = uint32(value)
 	} else {
 		if layout.extra == nil {
-			layout.extra = make([]int, 0, 128)
+			layout.extra = make([]uint32, 0, 128)
 		}
-		layout.extra = append(layout.extra, value)
+		layout.extra = append(layout.extra, uint32(value))
 	}
 	layout.count++
 	return index
@@ -38,9 +39,9 @@ func (layout *encodeLayout) add(value int) int {
 
 func (layout *encodeLayout) set(index, value int) {
 	if index < len(layout.local) {
-		layout.local[index] = value
+		layout.local[index] = uint32(value)
 	} else {
-		layout.extra[index-len(layout.local)] = value
+		layout.extra[index-len(layout.local)] = uint32(value)
 	}
 }
 
@@ -48,9 +49,9 @@ func (layout *encodeLayout) next() int {
 	index := layout.cursor
 	layout.cursor++
 	if index < len(layout.local) {
-		return layout.local[index]
+		return int(layout.local[index])
 	}
-	return layout.extra[index-len(layout.local)]
+	return int(layout.extra[index-len(layout.local)])
 }
 
 func writeUint16(buffer []byte, value uint16) {
