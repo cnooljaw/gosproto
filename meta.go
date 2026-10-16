@@ -40,6 +40,10 @@ type SprotoField struct {
 	pointer    bool
 	valueType  reflect.Type
 	int64Slice bool
+
+	encOwner           *SprotoType // 绑定 offset 的实际结构体，防止公开 Fields 替换后借用其他布局。
+	encOffset          uintptr
+	nativeInt64Pointer bool
 }
 
 // parse filed meta information
@@ -205,6 +209,8 @@ func (sf *SprotoField) init(f *reflect.StructField) error {
 		return fmt.Errorf("sproto: tagged field must be exported")
 	}
 	sf.index = f.Index
+	sf.encOffset = f.Offset
+	sf.nativeInt64Pointer = f.Type == reflect.TypeFor[*int64]()
 	if err := sf.parse(tagString); err != nil {
 		return err
 	}
@@ -215,12 +221,13 @@ func (sf *SprotoField) init(f *reflect.StructField) error {
 }
 
 type SprotoType struct {
-	typ    reflect.Type // 当前结构体的 Go 类型，用于构造独占子对象。
-	Name   string       // struct name
-	Fields []*SprotoField
-	tagMap map[int]int // tag -> fileds index
-	order  []int       // list of struct field numbers in tag order
-	dense  []int       // 低编号稠密字段的 index+1；零表示未知，长度至多 128。
+	typ                reflect.Type // 当前结构体的 Go 类型，用于构造独占子对象。
+	Name               string       // struct name
+	Fields             []*SprotoField
+	tagMap             map[int]int // tag -> fileds index
+	order              []int       // list of struct field numbers in tag order
+	dense              []int       // 低编号稠密字段的 index+1；零表示未知，长度至多 128。
+	nativeInt64Pointer bool        // 原始 Go 类型是否包含原生 *int64 字段。
 }
 
 func (st *SprotoType) Len() int { return len(st.order) }
@@ -280,13 +287,14 @@ func getSprotoTypeLocked(t reflect.Type) (*SprotoType, error) {
 	st.tagMap = make(map[int]int)
 
 	for i := 0; i < numField; i++ {
-		sf := new(SprotoField)
+		sf := &SprotoField{encOwner: st}
 		f := t.Field(i)
 		if err := sf.init(&f); err != nil {
 			delete(stMap, t)
 			return nil, err
 		}
 
+		st.nativeInt64Pointer = st.nativeInt64Pointer || sf.nativeInt64Pointer
 		st.Fields[i] = sf
 		st.order[i] = i
 		if sf.Tag >= 0 {

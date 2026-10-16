@@ -81,6 +81,26 @@ func integerWidth(bits uint64) int {
 	return 8
 }
 
+func signedSize(bits uint64) (int, bool) {
+	if bits <= MaxEmbeddedInt {
+		return 0, true
+	}
+	return integerWidth(bits), false
+}
+
+func encodeIntegerInto(bits uint64, output []byte) (uint16, int) {
+	if bits <= MaxEmbeddedInt {
+		return uint16((bits + 1) * 2), 0
+	}
+	width := integerWidth(bits)
+	if width == 4 {
+		writeUint32(output[4:], uint32(bits))
+	} else {
+		writeUint64(output[4:], bits)
+	}
+	return 0, width
+}
+
 func omittedField(field *SprotoField, value reflect.Value) bool {
 	return field.nilable && value.IsNil()
 }
@@ -100,15 +120,27 @@ func encodeMessageInto(schema *SprotoType, value reflect.Value, output []byte, l
 		return 2
 	}
 	record := value.Elem()
+	pointer := messageEncodePointer(schema, value)
 	headerOffset, bodyOffset, previous := 2, 2+count*2, -1
 	for _, index := range schema.order {
 		field := schema.Fields[index]
 		if field.Tag < 0 {
 			continue
 		}
-		current := record.Field(field.index[0])
-		if omittedField(field, current) {
-			continue
+		native := field.nativeInteger(schema)
+		var current reflect.Value
+		var bits uint64
+		if native {
+			var present bool
+			bits, present = pointer.integer(field.encOffset)
+			if !present {
+				continue
+			}
+		} else {
+			current = record.Field(field.index[0])
+			if omittedField(field, current) {
+				continue
+			}
 		}
 		if skip := skipTag(previous, field.Tag); skip > 0 {
 			writeUint16(output[headerOffset:], skip)
@@ -116,7 +148,9 @@ func encodeMessageInto(schema *SprotoType, value reflect.Value, output []byte, l
 		}
 		var header uint16
 		var length int
-		if field.Array || field.Wire == WireStructName {
+		if native {
+			header, length = encodeIntegerInto(bits, output[bodyOffset:])
+		} else if field.Array || field.Wire == WireStructName {
 			length = encodeFieldInto(field, current, output[bodyOffset+4:], layout)
 		} else {
 			header, length = encodeScalarInto(field, current, output[bodyOffset:])

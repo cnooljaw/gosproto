@@ -16,6 +16,7 @@ type fuzzDocument struct {
 	Values   []int64         `sproto:"integer,4,array"`
 	Number   float64         `sproto:"double,5"`
 	Binary   []byte          `sproto:"string,6"`
+	Native   *int64          `sproto:"integer,7"`
 }
 
 // 验证任意有限字节的 pack/unpack 保留内容，只追加八字节对齐的零填充。
@@ -67,11 +68,13 @@ func FuzzCodecRoundTrip(f *testing.F) {
 }
 
 func makeFuzzDocument(data []byte, bits uint64) *fuzzDocument {
+	number := int64(bits)
 	root := &fuzzDocument{
-		Names: []string{"", string(data)}, Flags: []bool{false, true},
+		Native: &number,
+		Names:  []string{"", string(data)}, Flags: []bool{false, true},
 		Values: []int64{-1, int64(bits)}, Number: math.Float64frombits(bits),
 		Binary:   append([]byte{}, data...),
-		Children: []*fuzzDocument{{Number: math.Float64frombits(bits)}, {}},
+		Children: []*fuzzDocument{{Number: math.Float64frombits(bits), Native: &number}, {}},
 	}
 	if len(data) != 0 {
 		current := root

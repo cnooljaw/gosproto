@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"runtime"
 )
 
 // Limits 是编解码的本地资源预算；零值使用有限默认值，不改变 wire 格式。
@@ -69,11 +70,13 @@ func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
 	budget := &decodeBudget{limits: limits}
 	var layout encodeLayout
 	size, err := encodedSize(schema, value, budget, 1, &layout)
+	runtime.KeepAlive(message)
 	if err != nil {
 		return nil, err
 	}
 	output := make([]byte, size)
 	encodeMessageInto(schema, value, output, &layout)
+	runtime.KeepAlive(message)
 	return output, nil
 }
 
@@ -90,15 +93,27 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 		return size, nil
 	}
 	record := value.Elem()
+	pointer := messageEncodePointer(schema, value)
 	headerCount := 0
 	for _, index := range schema.order {
 		field := schema.Fields[index]
 		if field.Tag < 0 {
 			continue
 		}
-		current := record.Field(field.index[0])
-		if omittedField(field, current) {
-			continue
+		native := field.nativeInteger(schema)
+		var current reflect.Value
+		var bits uint64
+		if native {
+			var present bool
+			bits, present = pointer.integer(field.encOffset)
+			if !present {
+				continue
+			}
+		} else {
+			current = record.Field(field.index[0])
+			if omittedField(field, current) {
+				continue
+			}
 		}
 		if err := budget.add(1); err != nil {
 			return 0, err
@@ -114,7 +129,14 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 		size += 2
 		headerCount++
 		lastTag = field.Tag
-		part, inline, err := fieldSize(field, current, budget, depth, layout)
+		var part int
+		var inline bool
+		var err error
+		if native {
+			part, inline = signedSize(bits)
+		} else {
+			part, inline, err = fieldSize(field, current, budget, depth, layout)
+		}
 		if err != nil {
 			return 0, err
 		}

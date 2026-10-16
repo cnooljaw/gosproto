@@ -322,3 +322,98 @@ type HoldValMSG struct {
 }
 
 var valMSG ValMSG
+
+// 原生指针在填充字段和嵌套结构后仍与命名整数产生相同 wire，且每次读取当前值。
+func TestEncodeNativePointerOffsets(t *testing.T) {
+	type number int64
+	type native struct {
+		ignored [19]byte
+		Value   *int64  `sproto:"integer,0"`
+		Child   *native `sproto:"struct,2"`
+	}
+	type named struct {
+		Value *number `sproto:"integer,0"`
+		Child *named  `sproto:"struct,2"`
+	}
+	var nativeValue int64
+	var namedValue number
+	input := &native{Value: &nativeValue, Child: &native{Value: &nativeValue}}
+	reference := &named{Value: &namedValue, Child: &named{Value: &namedValue}}
+	for _, value := range []int64{0, MaxEmbeddedInt, MaxEmbeddedInt + 1, -1, MinInt32, MinInt32 - 1, math.MinInt64, math.MaxInt64} {
+		nativeValue, namedValue = value, number(value)
+		encoded, err := Encode(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := Encode(reference)
+		if err != nil || !bytes.Equal(encoded, want) {
+			t.Fatalf("value %d: native %x, named %x, error %v", value, encoded, want, err)
+		}
+	}
+	input.Value, input.Child.Value = nil, nil
+	reference.Value, reference.Child.Value = nil, nil
+	encoded, err := Encode(input)
+	want, referenceErr := Encode(reference)
+	if err != nil || referenceErr != nil || !bytes.Equal(encoded, want) {
+		t.Fatalf("nil fields: native %x, named %x, errors %v/%v", encoded, want, err, referenceErr)
+	}
+}
+
+// 替换导出的字段描述时按当前字段索引取值，不借用另一个结构体的内存位置。
+func TestEncodeReplacedFieldMetadata(t *testing.T) {
+	type small struct {
+		ignored byte
+		Value   *int64 `sproto:"integer,0"`
+	}
+	type large struct {
+		ignored [256]byte
+		Value   *int64 `sproto:"integer,0"`
+	}
+	value := int64(-42)
+	input := &small{Value: &value}
+	want, err := Encode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := GetSprotoType(reflect.TypeFor[small]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := GetSprotoType(reflect.TypeFor[large]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := schema.Fields[1]
+	schema.Fields[1] = other.Fields[1]
+	t.Cleanup(func() { schema.Fields[1] = original })
+	encoded, err := Encode(input)
+	if err != nil || !bytes.Equal(encoded, want) {
+		t.Fatalf("replaced field: %x != %x, %v", encoded, want, err)
+	}
+}
+
+// 公开 Wire/Array 描述变化时编码仍使用当前描述，不复用之前绑定的标量操作。
+func TestEncodeChangedFieldShape(t *testing.T) {
+	type binary struct {
+		Value []byte `sproto:"string,0"`
+	}
+	type integers struct {
+		Value []uint8 `sproto:"integer,0,array"`
+	}
+	input := &binary{Value: []byte{0, 42, 255}}
+	if _, err := Encode(input); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := GetSprotoType(reflect.TypeFor[binary]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := schema.Fields[0]
+	field.Wire, field.Array = WireVarintName, true
+	t.Cleanup(func() { field.Wire, field.Array = WireBytesName, false })
+	encoded, err := Encode(input)
+	want, referenceErr := Encode(&integers{Value: input.Value})
+	if err != nil || referenceErr != nil || !bytes.Equal(encoded, want) {
+		t.Fatalf("changed shape: %x != %x, errors %v/%v", encoded, want, err, referenceErr)
+	}
+}
