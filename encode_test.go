@@ -417,3 +417,65 @@ func TestEncodeChangedFieldShape(t *testing.T) {
 		t.Fatalf("changed shape: %x != %x, errors %v/%v", encoded, want, err, referenceErr)
 	}
 }
+
+// 嵌套字段描述替换后，子 schema 的字段索引仍作用于实际 Go 值，不能借用另一种布局的 offset。
+func TestEncodeReplacedNestedMetadata(t *testing.T) {
+	type actualChild struct {
+		ignored [32]byte
+		Value   *int64 `sproto:"integer,0"`
+	}
+	type describedChild struct {
+		ignored byte
+		Value   *int64 `sproto:"integer,0"`
+	}
+	type actualParent struct {
+		Child    *actualChild   `sproto:"struct,0"`
+		Children []*actualChild `sproto:"struct,1,array"`
+	}
+	type describedParent struct {
+		Child    *describedChild   `sproto:"struct,0"`
+		Children []*describedChild `sproto:"struct,1,array"`
+	}
+	number := int64(42)
+	input := &actualParent{Child: &actualChild{Value: &number}, Children: []*actualChild{{Value: &number}, nil}}
+	want, err := Encode(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := GetSprotoType(reflect.TypeFor[actualParent]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	described, err := GetSprotoType(reflect.TypeFor[describedParent]())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, name := range []string{"child", "children"} {
+		t.Run(name, func(t *testing.T) {
+			original := schema.Fields[index]
+			schema.Fields[index] = described.Fields[index]
+			t.Cleanup(func() { schema.Fields[index] = original })
+			encoded, err := Encode(input)
+			if err != nil || !bytes.Equal(encoded, want) {
+				t.Fatalf("nested schema replacement: %x != %x, %v", encoded, want, err)
+			}
+		})
+	}
+	t.Run("child_fields", func(t *testing.T) {
+		actual, err := GetSprotoType(reflect.TypeFor[actualChild]())
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := GetSprotoType(reflect.TypeFor[describedChild]())
+		if err != nil {
+			t.Fatal(err)
+		}
+		original := actual.Fields[1]
+		actual.Fields[1] = other.Fields[1]
+		t.Cleanup(func() { actual.Fields[1] = original })
+		encoded, err := Encode(input)
+		if err != nil || !bytes.Equal(encoded, want) {
+			t.Fatalf("nested field replacement: %x != %x, %v", encoded, want, err)
+		}
+	})
+}

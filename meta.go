@@ -228,6 +228,7 @@ type SprotoType struct {
 	order              []int       // list of struct field numbers in tag order
 	dense              []int       // 低编号稠密字段的 index+1；零表示未知，长度至多 128。
 	nativeInt64Pointer bool        // 原始 Go 类型是否包含原生 *int64 字段。
+	int64Record        bool        // 所有声明的协议字段都是原生 *int64，仍需在每次绑定时核对公开描述。
 }
 
 func (st *SprotoType) Len() int { return len(st.order) }
@@ -277,7 +278,7 @@ func getSprotoTypeLocked(t reflect.Type) (*SprotoType, error) {
 		return st, nil
 	}
 
-	st := &SprotoType{typ: t}
+	st := &SprotoType{typ: t, int64Record: true}
 	stMap[t] = st
 
 	st.Name = t.Name()
@@ -295,6 +296,9 @@ func getSprotoTypeLocked(t reflect.Type) (*SprotoType, error) {
 		}
 
 		st.nativeInt64Pointer = st.nativeInt64Pointer || sf.nativeInt64Pointer
+		if sf.Tag >= 0 && !sf.nativeInt64Pointer {
+			st.int64Record = false
+		}
 		st.Fields[i] = sf
 		st.order[i] = i
 		if sf.Tag >= 0 {

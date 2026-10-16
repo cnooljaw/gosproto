@@ -113,21 +113,21 @@ func skipTag(tag, nextTag int) uint16 {
 }
 
 // encodeMessageInto 将子结构直接写入同一个已验证尺寸的输出区间。
-func encodeMessageInto(schema *SprotoType, value reflect.Value, output []byte, layout *encodeLayout) int {
+func encodeMessageInto(schema *SprotoType, value reflect.Value, output []byte, layout *encodeLayout, binding encodeBinding) int {
 	count := layout.next()
 	writeUint16(output, uint16(count))
 	if value.IsNil() {
 		return 2
 	}
 	record := value.Elem()
-	pointer := messageEncodePointer(schema, value)
+	pointer := messageEncodePointer(value, binding)
 	headerOffset, bodyOffset, previous := 2, 2+count*2, -1
 	for _, index := range schema.order {
 		field := schema.Fields[index]
 		if field.Tag < 0 {
 			continue
 		}
-		native := field.nativeInteger(schema)
+		native := binding.native && field.nativeInteger(schema)
 		var current reflect.Value
 		var bits uint64
 		if native {
@@ -151,7 +151,7 @@ func encodeMessageInto(schema *SprotoType, value reflect.Value, output []byte, l
 		if native {
 			header, length = encodeIntegerInto(bits, output[bodyOffset:])
 		} else if field.Array || field.Wire == WireStructName {
-			length = encodeFieldInto(field, current, output[bodyOffset+4:], layout)
+			length = encodeFieldInto(field, current, output[bodyOffset+4:], layout, binding.exact && field.encOwner == schema && field.Array != field.pointer)
 		} else {
 			header, length = encodeScalarInto(field, current, output[bodyOffset:])
 		}
@@ -166,7 +166,7 @@ func encodeMessageInto(schema *SprotoType, value reflect.Value, output []byte, l
 	return bodyOffset
 }
 
-func encodeFieldInto(field *SprotoField, value reflect.Value, output []byte, layout *encodeLayout) int {
+func encodeFieldInto(field *SprotoField, value reflect.Value, output []byte, layout *encodeLayout, trusted bool) int {
 	if field.Array {
 		if value.Len() == 0 {
 			return 0
@@ -211,15 +211,22 @@ func encodeFieldInto(field *SprotoField, value reflect.Value, output []byte, lay
 				offset += 4 + copy(output[offset+4:], text)
 			}
 		case WireStructName:
+			childBinding := bindEncodeChild(field, value, trusted)
+			integers := childBinding.native && field.st.int64Record && field.st.nativeIntegerFields()
 			for index := 0; index < value.Len(); index++ {
-				length := encodeMessageInto(field.st, value.Index(index), output[offset+4:], layout)
+				var length int
+				if integers {
+					length = encodeIntegerRecordInto(field.st, value.Index(index), output[offset+4:], layout)
+				} else {
+					length = encodeMessageInto(field.st, value.Index(index), output[offset+4:], layout, childBinding)
+				}
 				writeUint32(output[offset:], uint32(length))
 				offset += 4 + length
 			}
 		}
 		return offset
 	}
-	return encodeMessageInto(field.st, value, output, layout)
+	return encodeMessageInto(field.st, value, output, layout, bindEncodeChild(field, value, trusted))
 }
 
 // encodeScalarInto 只读取一次当前标量，同时确定 inline 头并写出非 inline 内容。

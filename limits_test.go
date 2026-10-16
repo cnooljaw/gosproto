@@ -506,3 +506,46 @@ func TestDoubleBitPatterns(t *testing.T) {
 		}
 	}
 }
+
+// 同构整数记录数组与命名类型 wire 一致，稀疏 tag、空元素及预算边界不能因批量路径放宽。
+func TestIntegerRecordArrayBudgetsAndTags(t *testing.T) {
+	type record struct {
+		First  *int64 `sproto:"integer,0"`
+		Bridge *int64 `sproto:"integer,20000"`
+		Last   *int64 `sproto:"integer,40000"`
+	}
+	type records struct {
+		Items []*record `sproto:"struct,0,array"`
+	}
+	type number int64
+	type namedRecord struct {
+		First  *number `sproto:"integer,0"`
+		Bridge *number `sproto:"integer,20000"`
+		Last   *number `sproto:"integer,40000"`
+	}
+	type namedRecords struct {
+		Items []*namedRecord `sproto:"struct,0,array"`
+	}
+	first, bridge, last := int64(-1), int64(0), int64(math.MaxInt64)
+	namedFirst, namedBridge, namedLast := number(first), number(bridge), number(last)
+	input := &records{Items: []*record{{First: &first, Bridge: &bridge, Last: &last}, nil, {}}}
+	reference := &namedRecords{Items: []*namedRecord{{First: &namedFirst, Bridge: &namedBridge, Last: &namedLast}, nil, {}}}
+	want, err := sproto.Encode(reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := sproto.EncodeWithLimits(input, sproto.Limits{MaxBytes: len(want), MaxDepth: 2, MaxElements: 7})
+	if err != nil || !bytes.Equal(encoded, want) {
+		t.Fatalf("integer records: %x != %x, %v", encoded, want, err)
+	}
+	for _, limits := range []sproto.Limits{{MaxBytes: len(want) - 1}, {MaxDepth: 1}, {MaxElements: 6}} {
+		encoded, err := sproto.EncodeWithLimits(input, limits)
+		if !errors.Is(err, sproto.ErrLimit) || encoded != nil {
+			t.Fatalf("integer record budget %+v: %x, %v", limits, encoded, err)
+		}
+	}
+	input.Items[0].Bridge = nil
+	if encoded, err := sproto.Encode(input); !errors.Is(err, sproto.ErrEncode) || encoded != nil {
+		t.Fatalf("missing tag bridge: %x, %v", encoded, err)
+	}
+}

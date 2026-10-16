@@ -69,18 +69,19 @@ func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
 	}
 	budget := &decodeBudget{limits: limits}
 	var layout encodeLayout
-	size, err := encodedSize(schema, value, budget, 1, &layout)
+	binding := knownEncodeType(schema)
+	size, err := encodedSize(schema, value, budget, 1, &layout, binding)
 	runtime.KeepAlive(message)
 	if err != nil {
 		return nil, err
 	}
 	output := make([]byte, size)
-	encodeMessageInto(schema, value, output, &layout)
+	encodeMessageInto(schema, value, output, &layout, binding)
 	runtime.KeepAlive(message)
 	return output, nil
 }
 
-func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout) (int, error) {
+func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout, binding encodeBinding) (int, error) {
 	if depth > budget.limits.MaxDepth {
 		return 0, ErrLimit
 	}
@@ -93,14 +94,14 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 		return size, nil
 	}
 	record := value.Elem()
-	pointer := messageEncodePointer(schema, value)
+	pointer := messageEncodePointer(value, binding)
 	headerCount := 0
 	for _, index := range schema.order {
 		field := schema.Fields[index]
 		if field.Tag < 0 {
 			continue
 		}
-		native := field.nativeInteger(schema)
+		native := binding.native && field.nativeInteger(schema)
 		var current reflect.Value
 		var bits uint64
 		if native {
@@ -135,7 +136,7 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 		if native {
 			part, inline = signedSize(bits)
 		} else {
-			part, inline, err = fieldSize(field, current, budget, depth, layout)
+			part, inline, err = fieldSize(field, current, budget, depth, layout, binding.exact && field.encOwner == schema && field.Array != field.pointer)
 		}
 		if err != nil {
 			return 0, err
@@ -151,7 +152,7 @@ func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, 
 	return size, nil
 }
 
-func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout) (int, bool, error) {
+func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout, trusted bool) (int, bool, error) {
 	if field.Array {
 		if err := budget.add(value.Len()); err != nil {
 			return 0, false, err
@@ -202,8 +203,20 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 				}
 			}
 		case WireStructName:
+			var childBinding encodeBinding
+			if value.Len() > 0 {
+				childBinding = bindEncodeChild(field, value, trusted)
+
+			}
+			integers := childBinding.native && field.st.int64Record && field.st.nativeIntegerFields()
 			for i := 0; i < value.Len(); i++ {
-				part, err := encodedSize(field.st, value.Index(i), budget, depth+1, layout)
+				var part int
+				var err error
+				if integers {
+					part, err = encodedIntegerRecordSize(field.st, value.Index(i), budget, depth+1, layout)
+				} else {
+					part, err = encodedSize(field.st, value.Index(i), budget, depth+1, layout, childBinding)
+				}
 				if err != nil {
 					return 0, false, err
 				}
@@ -219,7 +232,7 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 		return size, false, nil
 	}
 	if field.Wire == WireStructName {
-		size, err := encodedSize(field.st, value, budget, depth+1, layout)
+		size, err := encodedSize(field.st, value, budget, depth+1, layout, bindEncodeChild(field, value, trusted))
 		return size, false, err
 	}
 	if field.pointer {
