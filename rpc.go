@@ -203,7 +203,9 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 			err = fmt.Errorf("sproto: repeated session:%d", session)
 			return
 		}
-		header.Session = &session
+		// 仅有响应的请求需要独占 session 存储，避免让通知路径的参数一起逃逸。
+		requestSession := session
+		header.Session = &requestSession
 		if len(rpc.sessions) >= 1024 {
 			return nil, ErrLimit
 		}

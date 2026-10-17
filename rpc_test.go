@@ -203,7 +203,7 @@ func TestRpcFrameBodyBudget(t *testing.T) {
 	}
 }
 
-// RPC 组合工作区比分步 header 编码、Append 和 Pack 少分配，避免重新引入拼接缓冲。
+// RPC 组合工作区减少拼接分配，通知路径也不应为被忽略的 session 分配额外对象。
 func TestRpcFrameAllocation(t *testing.T) {
 	input := &packedBufferMessage{Payload: bytes.Repeat([]byte{0x91}, 256)}
 	code := int32(1)
@@ -232,5 +232,20 @@ func TestRpcFrameAllocation(t *testing.T) {
 	})
 	if len(output) == 0 || assembled >= separate {
 		t.Fatalf("RPC=%v separate=%v, want fewer allocations", assembled, separate)
+	}
+	requestRpc, err := NewRpc([]*Protocol{{Type: code, Name: "request", Request: reflect.TypeOf(input), Response: reflect.TypeOf(input)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSession := testing.AllocsPerRun(100, func() {
+		var err error
+		output, err = requestRpc.RequestEncode("request", 1, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestRpc.CancelSession(1)
+	})
+	if assembled >= withSession {
+		t.Fatalf("notification=%v request=%v, want no session allocation for notification", assembled, withSession)
 	}
 }
