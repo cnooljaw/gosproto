@@ -203,7 +203,7 @@ func TestRpcFrameBodyBudget(t *testing.T) {
 	}
 }
 
-// RPC 组帧只承担 body/Pack 缓冲，不为私有 header 或 session 新增堆对象。
+// 请求组帧不新增 header/session 对象，响应组合路径与 EncodePacked 一样省去 body 缓冲。
 func TestRpcFrameAllocation(t *testing.T) {
 	input := &packedBufferMessage{Payload: bytes.Repeat([]byte{0x91}, 256)}
 	code := int32(1)
@@ -259,7 +259,17 @@ func TestRpcFrameAllocation(t *testing.T) {
 		}
 		output = Pack(body)
 	})
-	if assembled > buffers || withSession > buffers || response > buffers {
-		t.Fatalf("notification=%v request=%v response=%v buffers=%v, want no header/session heap objects", assembled, withSession, response, buffers)
+	if assembled > buffers || withSession > buffers {
+		t.Fatalf("notification=%v request=%v buffers=%v, want no header/session heap objects", assembled, withSession, buffers)
+	}
+	packedBody := testing.AllocsPerRun(100, func() {
+		var err error
+		output, err = EncodePacked(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if response > packedBody {
+		t.Fatalf("response=%v packed body=%v, want no intermediate body buffer", response, packedBody)
 	}
 }

@@ -118,16 +118,15 @@ func (rpc *Rpc) Dispatch(packed []byte) (mode RpcMode, name string, session int3
 	return
 }
 
-// packRpcFrame 编码库内固定的两个 int32 字段，再与已编码 body 拼成独占帧。
+// encodeRpcHeader 编码库内固定的两个 int32 字段，返回实际写出长度。
 // tag 0/1 最多占六字节头部和两个八字节非 inline 段，总长不超过 22 字节。
 // 栈内小缓冲只属于本次调用；整数与 tag 跳跃仍复用普通编码器的 wire 函数。
-func packRpcFrame(header *rpcHeader, body []byte) ([]byte, error) {
+func encodeRpcHeader(header *rpcHeader, encodedHeader *[22]byte) (int, error) {
 	limits, err := normalizeLimits(Limits{})
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	budget := &decodeBudget{limits: limits}
-	var encodedHeader [22]byte
 	count := 0
 	if header.Type != nil {
 		count = 1
@@ -142,7 +141,7 @@ func packRpcFrame(header *rpcHeader, body []byte) ([]byte, error) {
 			continue
 		}
 		if err := budget.add(1); err != nil {
-			return nil, err
+			return 0, err
 		}
 		if skip := skipTag(previous, tag); skip > 0 {
 			writeUint16(encodedHeader[headerOffset:], skip)
@@ -160,13 +159,23 @@ func packRpcFrame(header *rpcHeader, body []byte) ([]byte, error) {
 	// 私有 header 无嵌套，深度固定为一；normalizeLimits 已保证 MaxDepth 至少为一。
 	// header 与 body 各自使用默认预算，不将二者改为共享额度。
 	if bodyOffset > limits.MaxBytes {
-		return nil, ErrLimit
+		return 0, ErrLimit
 	}
-	size := bodyOffset + len(body)
+	return bodyOffset, nil
+}
+
+// packRpcFrame 将固定头与已编码 body 拼成独占帧，请求仍保留独立 body 的错误返回契约。
+func packRpcFrame(header *rpcHeader, body []byte) ([]byte, error) {
+	var encodedHeader [22]byte
+	headerSize, err := encodeRpcHeader(header, &encodedHeader)
+	if err != nil {
+		return nil, err
+	}
+	size := headerSize + len(body)
 	output := make([]byte, packedBufferSize(size))
 	start := len(output) - size
-	copy(output[start:], encodedHeader[:bodyOffset])
-	copy(output[start+bodyOffset:], body)
+	copy(output[start:], encodedHeader[:headerSize])
+	copy(output[start+headerSize:], body)
 	return packInto(output, output[start:]), nil
 }
 
@@ -186,12 +195,15 @@ func (rpc *Rpc) ResponseEncode(name string, session int32, response interface{})
 		if reflect.TypeOf(response) != protocol.Response {
 			return nil, ErrEncode
 		}
-		if data, err = Encode(response); err != nil {
-			return
+		var encodedHeader [22]byte
+		headerSize, err := encodeRpcHeader(&rpcHeader{Session: &session}, &encodedHeader)
+		if err != nil {
+			return nil, err
 		}
+		return encodeWithLimits(response, Limits{}, true, encodedHeader[:headerSize])
 	}
 
-	return packRpcFrame(&rpcHeader{Session: &session}, data)
+	return packRpcFrame(&rpcHeader{Session: &session}, nil)
 }
 
 // RequestEncode 编码独占 RPC 请求帧；有响应的协议要求正 session，并登记有界等待。

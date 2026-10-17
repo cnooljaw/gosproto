@@ -55,10 +55,12 @@ func (budget *decodeBudget) add(count int) error {
 
 // EncodeWithLimits 在任何递归编码和大块分配前验证值、深度与预计输出大小。
 func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
-	return encodeWithLimits(message, limits, false)
+	return encodeWithLimits(message, limits, false, nil)
 }
 
-func encodeWithLimits(message interface{}, limits Limits, packResult bool) ([]byte, error) {
+// prefix 只由内部组合路径传入；body 仍先完成独立预算预检，再与前缀写入同一独占缓冲。
+// prefix 只借用至本次调用返回，结果不与它共享存储；普通调用传 nil。
+func encodeWithLimits(message interface{}, limits Limits, packResult bool, prefix []byte) ([]byte, error) {
 	limits, err := normalizeLimits(limits)
 	if err != nil {
 		return nil, err
@@ -79,15 +81,19 @@ func encodeWithLimits(message interface{}, limits Limits, packResult bool) ([]by
 	if err != nil {
 		return nil, err
 	}
-	capacity, start := size, 0
+	totalSize := len(prefix) + size
+	capacity, start := totalSize, 0
 	if packResult {
-		capacity = packedBufferSize(size)
+		capacity = packedBufferSize(totalSize)
 		// FF 头的最坏增长和八字节余量隔开读写游标，避免覆盖尚未消费的编码字节。
-		start = capacity - size
+		start = capacity - totalSize
 	}
 	output := make([]byte, capacity)
-	encoded := output[start : start+size]
-	encodeMessageInto(schema, value, encoded, &layout, binding)
+	encoded := output[start : start+totalSize]
+	if len(prefix) > 0 {
+		copy(encoded, prefix)
+	}
+	encodeMessageInto(schema, value, encoded[len(prefix):], &layout, binding)
 	runtime.KeepAlive(message)
 	if packResult {
 		return packInto(output, encoded), nil

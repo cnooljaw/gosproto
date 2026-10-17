@@ -87,6 +87,14 @@ func TestRpcInvalidDefinitionsAndMessages(t *testing.T) {
 	if _, err := rpc.ResponseEncode("test.foobar", 1, &FooResponse{}); !errors.Is(err, ErrEncode) {
 		t.Fatalf("invalid response payload: %v", err)
 	}
+	// 已声明 body 的 typed nil 是 ErrNil，不能因为头已准备就返回成功或部分帧。
+	var empty *FoobarResponse
+	for _, session := range []int32{1, 32767, MaxInt32} {
+		output, err := rpc.ResponseEncode("test.foobar", session, empty)
+		if !errors.Is(err, ErrNil) || output != nil {
+			t.Fatalf("typed nil response session=%d output=%d err=%v", session, len(output), err)
+		}
+	}
 	if _, err := rpc.ResponseEncode("missing", 1, &FoobarResponse{}); !errors.Is(err, ErrUnknownProtocol) {
 		t.Fatalf("unknown response: %v", err)
 	}
