@@ -1,5 +1,7 @@
 # 未发布
 
+- 有响应且声明 Request 的 RPC 请求在锁外预检并编码到独占 Pack 工作区，session 接纳后原地 Pack，省去中间 body 分配和复制；重复 session 仍返回限长限容的 raw body，错误顺序、等待登记与独占结果不变。
+
 - 有 Request、无 Response 的 RPC 通知复用私有 header 前缀和独占 Pack 工作区，省去一次中间 body 分配和复制；通知仍忽略 session、不登记等待，有响应请求的校验顺序、锁范围及重复 session 返回不变。
 
 - 声明了 body 的 RPC ResponseEncode 将私有 header 前缀与 body 直接写入同一独占 Pack 工作区，省去中间 body 分配和复制；保留独立预算、错误、wire/cap 与所有权，请求登记和错误返回路径不变。

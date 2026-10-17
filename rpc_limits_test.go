@@ -61,7 +61,7 @@ func TestRpcInvalidDefinitionsAndMessages(t *testing.T) {
 		t.Fatalf("unknown request: %v", err)
 	}
 	for _, session := range []int32{0, -1} {
-		if _, err := rpc.RequestEncode("test.foobar", session, request); !errors.Is(err, ErrUnknownSession) {
+		if output, err := rpc.RequestEncode("test.foobar", session, request); !errors.Is(err, ErrUnknownSession) || output != nil {
 			t.Fatalf("invalid session: %v", err)
 		}
 		if _, err := rpc.ResponseEncode("test.foobar", session, &FoobarResponse{}); !errors.Is(err, ErrUnknownSession) {
@@ -78,11 +78,18 @@ func TestRpcInvalidDefinitionsAndMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body, err := rpc.RequestEncode("test.foobar", 1, request); err == nil || !bytes.Equal(body, encoded) {
+	if body, err := rpc.RequestEncode("test.foobar", 1, request); err == nil || !bytes.Equal(body, encoded) || cap(body) != len(encoded) {
 		t.Fatal("duplicate session must preserve the existing encoded-body error result")
 	}
 	if _, err := rpc.RequestEncode("test.foobar", 0, &FooResponse{}); !errors.Is(err, ErrEncode) {
 		t.Fatalf("body error must precede request session validation: %v", err)
+	}
+	// body 错误必须先于 session 检查，且不能返回预备工作区的部分内容。
+	var nilRequest *FoobarRequest
+	for _, session := range []int32{0, -1, 1} {
+		if output, err := rpc.RequestEncode("test.foobar", session, nilRequest); !errors.Is(err, ErrNil) || output != nil {
+			t.Fatalf("typed nil request session=%d output=%d err=%v", session, len(output), err)
+		}
 	}
 	if _, err := rpc.ResponseEncode("test.foobar", 1, &FooResponse{}); !errors.Is(err, ErrEncode) {
 		t.Fatalf("invalid response payload: %v", err)

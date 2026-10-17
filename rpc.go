@@ -215,6 +215,7 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 	}
 
 	protocol := rpc.protocols[index]
+	var output, encoded []byte
 	if protocol.Request != nil {
 		if reflect.TypeOf(req) != protocol.Request {
 			return nil, ErrEncode
@@ -227,9 +228,18 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 			}
 			return encodeWithLimits(req, Limits{}, true, encodedHeader[:headerSize])
 		}
-		if data, err = Encode(req); err != nil {
-			return
+		var encodedHeader [22]byte
+		requestSession := session
+		headerSize, headerErr := encodeRpcHeader(&rpcHeader{Type: &protocol.Type, Session: &requestSession}, &encodedHeader)
+		if headerErr != nil {
+			return nil, headerErr
 		}
+		output, encoded, err = encodeBufferWithLimits(req, Limits{}, true, encodedHeader[:headerSize])
+		if err != nil {
+			return nil, err
+		}
+		// 重复 session 必须仍返回 raw body，限制容量以免暴露 header 或工作区余量。
+		data = encoded[headerSize:len(encoded):len(encoded)]
 	}
 
 	header := rpcHeader{
@@ -255,6 +265,9 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 		rpc.sessions[session] = index
 	}
 
+	if output != nil {
+		return packInto(output, encoded), nil
+	}
 	data, err = packRpcFrame(&header, data)
 	return
 }

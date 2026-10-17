@@ -61,17 +61,30 @@ func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
 // prefix 只由内部组合路径传入；body 仍先完成独立预算预检，再与前缀写入同一独占缓冲。
 // prefix 只借用至本次调用返回，结果不与它共享存储；普通调用传 nil。
 func encodeWithLimits(message interface{}, limits Limits, packResult bool, prefix []byte) ([]byte, error) {
-	limits, err := normalizeLimits(limits)
+	output, encoded, err := encodeBufferWithLimits(message, limits, packResult, prefix)
 	if err != nil {
 		return nil, err
+	}
+	if packResult {
+		return packInto(output, encoded), nil
+	}
+	return output, nil
+}
+
+// encodeBufferWithLimits 完成独立 body 预检和写出，返回同一独占缓冲及其中的未压缩帧。
+// reservePack 预留原 Pack 容量与读写间隔；RPC 请求可先做 session admission，再执行 Pack。
+func encodeBufferWithLimits(message interface{}, limits Limits, reservePack bool, prefix []byte) ([]byte, []byte, error) {
+	limits, err := normalizeLimits(limits)
+	if err != nil {
+		return nil, nil, err
 	}
 	typ, value, err := getbase(message)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	schema, err := GetSprotoType(typ.Elem())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	budget := &decodeBudget{limits: limits}
 	var layout encodeLayout
@@ -79,11 +92,11 @@ func encodeWithLimits(message interface{}, limits Limits, packResult bool, prefi
 	size, err := encodedSize(schema, value, budget, 1, &layout, binding)
 	runtime.KeepAlive(message)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	totalSize := len(prefix) + size
 	capacity, start := totalSize, 0
-	if packResult {
+	if reservePack {
 		capacity = packedBufferSize(totalSize)
 		// FF 头的最坏增长和八字节余量隔开读写游标，避免覆盖尚未消费的编码字节。
 		start = capacity - totalSize
@@ -95,10 +108,7 @@ func encodeWithLimits(message interface{}, limits Limits, packResult bool, prefi
 	}
 	encodeMessageInto(schema, value, encoded[len(prefix):], &layout, binding)
 	runtime.KeepAlive(message)
-	if packResult {
-		return packInto(output, encoded), nil
-	}
-	return output, nil
+	return output, encoded, nil
 }
 
 func encodedSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout, binding encodeBinding) (int, error) {

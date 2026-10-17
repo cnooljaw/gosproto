@@ -158,6 +158,22 @@ func TestRpcFrameAssembly(t *testing.T) {
 					if err != nil || !bytes.Equal(request, want) || cap(request) != cap(want) {
 						t.Fatalf("request code=%d session=%d size=%d err=%v", code, session, size, err)
 					}
+					if role.response != nil {
+						duplicate, err := rpc.RequestEncode("frame", session, input)
+						var expected []byte
+						if role.request != nil {
+							expected = body
+						}
+						if err == nil || !bytes.Equal(duplicate, expected) || cap(duplicate) != len(expected) {
+							t.Fatalf("duplicate body/cap code=%d session=%d size=%d err=%v", code, session, size, err)
+						}
+						if len(duplicate) > 0 {
+							duplicate[0] ^= 0xff
+							if !bytes.Equal(request, want) || !bytes.Equal(input.Payload, bytes.Repeat([]byte{0xa5}, size)) {
+								t.Fatal("duplicate body aliases request or input")
+							}
+						}
+					}
 					rpc.CancelSession(session)
 					snapshot := bytes.Clone(request)
 					head, err = Encode(&rpcHeader{Session: &session})
@@ -248,7 +264,7 @@ func TestRpcFrameBodyBudget(t *testing.T) {
 	}
 }
 
-// 有响应请求不新增 header/session 对象，通知与响应都不保留中间 body 缓冲。
+// RPC 三种编码路径均与 EncodePacked 一样不保留中间 body 缓冲。
 func TestRpcFrameAllocation(t *testing.T) {
 	input := &packedBufferMessage{Payload: bytes.Repeat([]byte{0x91}, 256)}
 	code := int32(1)
@@ -297,16 +313,6 @@ func TestRpcFrameAllocation(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	buffers := testing.AllocsPerRun(100, func() {
-		body, err := Encode(input)
-		if err != nil {
-			t.Fatal(err)
-		}
-		output = Pack(body)
-	})
-	if withSession > buffers {
-		t.Fatalf("request=%v buffers=%v, want no header/session heap objects", withSession, buffers)
-	}
 	packedBody := testing.AllocsPerRun(100, func() {
 		var err error
 		output, err = EncodePacked(input)
@@ -314,7 +320,7 @@ func TestRpcFrameAllocation(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if assembled > packedBody || response > packedBody {
-		t.Fatalf("notification=%v response=%v packed body=%v, want no intermediate body buffer", assembled, response, packedBody)
+	if assembled > packedBody || withSession > packedBody || response > packedBody {
+		t.Fatalf("notification=%v request=%v response=%v packed body=%v, want no intermediate body buffer", assembled, withSession, response, packedBody)
 	}
 }
