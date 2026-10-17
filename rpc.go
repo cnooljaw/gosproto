@@ -219,6 +219,14 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 		if reflect.TypeOf(req) != protocol.Request {
 			return nil, ErrEncode
 		}
+		if !protocol.HasResponse() {
+			var encodedHeader [22]byte
+			headerSize, err := encodeRpcHeader(&rpcHeader{Type: &protocol.Type}, &encodedHeader)
+			if err != nil {
+				return nil, err
+			}
+			return encodeWithLimits(req, Limits{}, true, encodedHeader[:headerSize])
+		}
 		if data, err = Encode(req); err != nil {
 			return
 		}
