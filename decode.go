@@ -297,6 +297,7 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 		return 0, err
 	}
 	record := value.Elem()
+	pointer := messageDecodePointer(schema, value)
 	tag := 0
 	for index := 0; index < count; index++ {
 		entry := int(readUint16(chunk[2+index*2:]))
@@ -326,11 +327,16 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 		if hasInline && (field.Array || field.Wire == WireBytesName || field.Wire == WireStructName) {
 			return 0, ErrDecode
 		}
-		// inline 原生整数已由字段元信息和本次 header 确认，可直接构造独占值。
-		if hasInline && field.nativeInt64Pointer {
+		if field.nativeInt64Pointer {
+			bits, err := scalarBits(inline, hasInline, content)
+			if err != nil {
+				return 0, err
+			}
 			result := new(int64)
-			*result = int64(inline)
-			record.Field(field.index[0]).Set(reflect.ValueOf(result))
+			*result = int64(bits)
+			if !pointer.setInteger(schema, field, result) {
+				record.Field(field.index[0]).Set(reflect.ValueOf(result))
+			}
 			continue
 		}
 		if err := field.dec(inline, hasInline, content, field, record.Field(field.index[0]), budget); err != nil {
