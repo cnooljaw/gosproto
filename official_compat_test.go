@@ -3,6 +3,8 @@ package sproto_test
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"reflect"
@@ -177,4 +179,69 @@ end`
 			}
 		}
 	})
+}
+
+// 私有固定 RPC 头的三种 presence 形态与整数边界必须匹配官方 C/Lua 编码及解码。
+func TestOfficialRPCHeader(t *testing.T) {
+	dir := os.Getenv("SPROTO_ORACLE_DIR")
+	if dir == "" {
+		t.Skip("set SPROTO_ORACLE_DIR for official C/Lua cross-check")
+	}
+	var arguments []string
+	for _, code := range []int32{math.MinInt32, -1, 0, 1, 32766, 32767, math.MaxInt32} {
+		rpc, err := sproto.NewRpc([]*sproto.Protocol{
+			{Type: code, Name: "call", Response: reflect.TypeOf(&oracleChild{})},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, session := range []int32{1, 32766, 32767, math.MaxInt32} {
+			packed, err := rpc.RequestEncode("call", session, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rpc.CancelSession(session)
+			arguments = append(arguments, fmt.Sprint(code), fmt.Sprint(session), hex.EncodeToString(packed))
+		}
+		notify, err := sproto.NewRpc([]*sproto.Protocol{{Type: code, Name: "notify"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		packed, err := notify.RequestEncode("notify", 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		arguments = append(arguments, fmt.Sprint(code), "-", hex.EncodeToString(packed))
+	}
+	rpc, err := sproto.NewRpc([]*sproto.Protocol{{Type: 1, Name: "response"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, session := range []int32{1, 32766, 32767, math.MaxInt32} {
+		packed, err := rpc.ResponseEncode("response", session, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		arguments = append(arguments, "-", fmt.Sprint(session), hex.EncodeToString(packed))
+	}
+	script := `local sproto=require "sproto"
+local sp=sproto.parse [[.Package { type 0 : integer session 1 : integer }]]
+local function hex(s) return (s:gsub(".",function(c) return string.format("%02x",string.byte(c)) end)) end
+for index=1,#arg,3 do
+  local value={}
+  if arg[index]~="-" then value.type=tonumber(arg[index]) end
+  if arg[index+1]~="-" then value.session=tonumber(arg[index+1]) end
+  local packed=sp:pencode("Package",value)
+  assert(hex(packed)==arg[index+2], "RPC wire mismatch at "..index)
+  local decoded=sp:pdecode("Package",packed)
+  assert(decoded.type==value.type and decoded.session==value.session)
+end
+print("rpc_headers="..(#arg//3))`
+	command := exec.Command("lua", append([]string{"-"}, arguments...)...)
+	command.Stdin = strings.NewReader(script)
+	command.Env = append(os.Environ(), "LUA_PATH="+dir+"/?.lua;;", "LUA_CPATH="+dir+"/?.so;;")
+	result, err := command.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(result)) != "rpc_headers=39" {
+		t.Fatalf("official RPC header oracle: %v %s", err, result)
+	}
 }

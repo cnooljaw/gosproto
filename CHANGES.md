@@ -1,5 +1,7 @@
 # 未发布
 
+- RPC 私有 type/session 头使用有界栈缓冲并复用现有整数与 tag 写出，消除反射遍历及 header/session 堆对象；保留字节/元素预算、默认深度边界、wire/cap、session 锁范围和错误顺序，新增官方 C/Lua RPC 头对照。
+
 - RPC RequestEncode 仅在有响应分支保存 session 副本，避免通知路径承担不使用的 session 堆分配；session 登记、锁范围、wire 和错误契约不变。
 
 - RPC RequestEncode/ResponseEncode 将 header 直接编码到独占 Pack 工作区并复制已编码 body，省去 header 字节缓冲及 Append 拼接分配；保留 body 预算、错误顺序、session admission/锁范围、wire、输出容量和独占结果。

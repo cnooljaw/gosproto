@@ -125,7 +125,7 @@ func TestRpcResponse(t *testing.T) {
 
 // RPC 组帧在 header 整数边界、FF 长段和无 body 协议上保持独立编码的 wire/cap 与输出独占。
 func TestRpcFrameAssembly(t *testing.T) {
-	for _, code := range []int32{-1, 0, 1, 32766, 32767, math.MaxInt32} {
+	for _, code := range []int32{math.MinInt32, -1, 0, 1, 32766, 32767, math.MaxInt32} {
 		for _, size := range []int{0, 1, 7, 8, 31, 2047, 2048, 2049, 65537} {
 			input := &packedBufferMessage{Payload: bytes.Repeat([]byte{0xa5}, size)}
 			body, err := Encode(input)
@@ -203,7 +203,7 @@ func TestRpcFrameBodyBudget(t *testing.T) {
 	}
 }
 
-// RPC 组合工作区减少拼接分配，通知路径也不应为被忽略的 session 分配额外对象。
+// RPC 组帧只承担 body/Pack 缓冲，不为私有 header 或 session 新增堆对象。
 func TestRpcFrameAllocation(t *testing.T) {
 	input := &packedBufferMessage{Payload: bytes.Repeat([]byte{0x91}, 256)}
 	code := int32(1)
@@ -245,7 +245,21 @@ func TestRpcFrameAllocation(t *testing.T) {
 		}
 		requestRpc.CancelSession(1)
 	})
-	if assembled >= withSession {
-		t.Fatalf("notification=%v request=%v, want no session allocation for notification", assembled, withSession)
+	response := testing.AllocsPerRun(100, func() {
+		var err error
+		output, err = requestRpc.ResponseEncode("request", 1, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	buffers := testing.AllocsPerRun(100, func() {
+		body, err := Encode(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output = Pack(body)
+	})
+	if assembled > buffers || withSession > buffers || response > buffers {
+		t.Fatalf("notification=%v request=%v response=%v buffers=%v, want no header/session heap objects", assembled, withSession, response, buffers)
 	}
 }

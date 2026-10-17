@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"runtime"
 	"sync"
 )
 
@@ -119,31 +118,55 @@ func (rpc *Rpc) Dispatch(packed []byte) (mode RpcMode, name string, session int3
 	return
 }
 
-// packRpcFrame 直接在独占工作区编码 header 并拼接已编码的 body，再从前部压缩。
-// body 已经过自己的预检，此处只检查 header 预算，不将两者改成共享编码额度。
+// packRpcFrame 编码库内固定的两个 int32 字段，再与已编码 body 拼成独占帧。
+// tag 0/1 最多占六字节头部和两个八字节非 inline 段，总长不超过 22 字节。
+// 栈内小缓冲只属于本次调用；整数与 tag 跳跃仍复用普通编码器的 wire 函数。
 func packRpcFrame(header *rpcHeader, body []byte) ([]byte, error) {
-	schema, err := GetSprotoType(reflect.TypeOf(rpcHeader{}))
-	if err != nil {
-		return nil, err
-	}
 	limits, err := normalizeLimits(Limits{})
 	if err != nil {
 		return nil, err
 	}
 	budget := &decodeBudget{limits: limits}
-	var layout encodeLayout
-	binding := knownEncodeType(schema)
-	value := reflect.ValueOf(header)
-	headerSize, err := encodedSize(schema, value, budget, 1, &layout, binding)
-	if err != nil {
-		return nil, err
+	var encodedHeader [22]byte
+	count := 0
+	if header.Type != nil {
+		count = 1
 	}
-	size := headerSize + len(body)
+	if header.Session != nil {
+		count = 2
+	}
+	writeUint16(encodedHeader[:], uint16(count))
+	headerOffset, bodyOffset, previous := 2, 2+count*2, -1
+	for tag, number := range [2]*int32{header.Type, header.Session} {
+		if number == nil {
+			continue
+		}
+		if err := budget.add(1); err != nil {
+			return nil, err
+		}
+		if skip := skipTag(previous, tag); skip > 0 {
+			writeUint16(encodedHeader[headerOffset:], skip)
+			headerOffset += 2
+		}
+		fieldHeader, width := encodeIntegerInto(uint64(int64(*number)), encodedHeader[bodyOffset:])
+		writeUint16(encodedHeader[headerOffset:], fieldHeader)
+		headerOffset += 2
+		if width > 0 {
+			writeUint32(encodedHeader[bodyOffset:], uint32(width))
+			bodyOffset += 4 + width
+		}
+		previous = tag
+	}
+	// 私有 header 无嵌套，深度固定为一；normalizeLimits 已保证 MaxDepth 至少为一。
+	// header 与 body 各自使用默认预算，不将二者改为共享额度。
+	if bodyOffset > limits.MaxBytes {
+		return nil, ErrLimit
+	}
+	size := bodyOffset + len(body)
 	output := make([]byte, packedBufferSize(size))
 	start := len(output) - size
-	encodeMessageInto(schema, value, output[start:start+headerSize], &layout, binding)
-	runtime.KeepAlive(header)
-	copy(output[start+headerSize:], body)
+	copy(output[start:], encodedHeader[:bodyOffset])
+	copy(output[start+bodyOffset:], body)
 	return packInto(output, output[start:]), nil
 }
 
@@ -189,7 +212,7 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 		}
 	}
 
-	header := &rpcHeader{
+	header := rpcHeader{
 		Type: &protocol.Type,
 	}
 
@@ -212,7 +235,7 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 		rpc.sessions[session] = index
 	}
 
-	data, err = packRpcFrame(header, data)
+	data, err = packRpcFrame(&header, data)
 	return
 }
 
