@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"sync"
 )
 
@@ -118,6 +119,35 @@ func (rpc *Rpc) Dispatch(packed []byte) (mode RpcMode, name string, session int3
 	return
 }
 
+// packRpcFrame 直接在独占工作区编码 header 并拼接已编码的 body，再从前部压缩。
+// body 已经过自己的预检，此处只检查 header 预算，不将两者改成共享编码额度。
+func packRpcFrame(header *rpcHeader, body []byte) ([]byte, error) {
+	schema, err := GetSprotoType(reflect.TypeOf(rpcHeader{}))
+	if err != nil {
+		return nil, err
+	}
+	limits, err := normalizeLimits(Limits{})
+	if err != nil {
+		return nil, err
+	}
+	budget := &decodeBudget{limits: limits}
+	var layout encodeLayout
+	binding := knownEncodeType(schema)
+	value := reflect.ValueOf(header)
+	headerSize, err := encodedSize(schema, value, budget, 1, &layout, binding)
+	if err != nil {
+		return nil, err
+	}
+	size := headerSize + len(body)
+	output := make([]byte, packedBufferSize(size))
+	start := len(output) - size
+	encodeMessageInto(schema, value, output[start:start+headerSize], &layout, binding)
+	runtime.KeepAlive(header)
+	copy(output[start+headerSize:], body)
+	return packInto(output, output[start:]), nil
+}
+
+// ResponseEncode 将响应编码为独占的 Sproto RPC 帧，session 必须为正数。
 func (rpc *Rpc) ResponseEncode(name string, session int32, response interface{}) (data []byte, err error) {
 	if session <= 0 {
 		return nil, ErrUnknownSession
@@ -138,12 +168,10 @@ func (rpc *Rpc) ResponseEncode(name string, session int32, response interface{})
 		}
 	}
 
-	header, _ := Encode(&rpcHeader{Session: &session})
-	data = Pack(Append(header, data))
-	return
+	return packRpcFrame(&rpcHeader{Session: &session}, data)
 }
 
-// session > 0: need response
+// RequestEncode 编码独占 RPC 请求帧；有响应的协议要求正 session，并登记有界等待。
 func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data []byte, err error) {
 	index, ok := rpc.nameMap[name]
 	if !ok {
@@ -182,8 +210,7 @@ func (rpc *Rpc) RequestEncode(name string, session int32, req interface{}) (data
 		rpc.sessions[session] = index
 	}
 
-	chunk, _ := Encode(header)
-	data = Pack(Append(chunk, data))
+	data, err = packRpcFrame(header, data)
 	return
 }
 

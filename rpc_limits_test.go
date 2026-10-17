@@ -1,6 +1,7 @@
 package sproto
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 )
@@ -73,8 +74,15 @@ func TestRpcInvalidDefinitionsAndMessages(t *testing.T) {
 	if _, err := rpc.RequestEncode("test.foobar", 1, request); err != nil {
 		t.Fatalf("bad input consumed session: %v", err)
 	}
-	if _, err := rpc.RequestEncode("test.foobar", 1, request); err == nil {
-		t.Fatal("duplicate session accepted")
+	encoded, err := Encode(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body, err := rpc.RequestEncode("test.foobar", 1, request); err == nil || !bytes.Equal(body, encoded) {
+		t.Fatal("duplicate session must preserve the existing encoded-body error result")
+	}
+	if _, err := rpc.RequestEncode("test.foobar", 0, &FooResponse{}); !errors.Is(err, ErrEncode) {
+		t.Fatalf("body error must precede request session validation: %v", err)
 	}
 	if _, err := rpc.ResponseEncode("test.foobar", 1, &FooResponse{}); !errors.Is(err, ErrEncode) {
 		t.Fatalf("invalid response payload: %v", err)
