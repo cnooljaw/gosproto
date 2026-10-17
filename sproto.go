@@ -73,13 +73,9 @@ func Uint(v uint) *uint {
 	return &v
 }
 
-// encode && pack
+// EncodePacked 使用默认有限预算编码并压缩，返回独占字节，不保留输入引用。
 func EncodePacked(sp interface{}) ([]byte, error) {
-	unpacked, err := Encode(sp)
-	if err != nil {
-		return nil, err
-	}
-	return Pack(unpacked), nil
+	return encodeWithLimits(sp, Limits{}, true)
 }
 
 // unpack && decode

@@ -94,11 +94,19 @@ func ffRunBytes(src []byte) int {
 	return consumed
 }
 
+func packedBufferSize(size int) int {
+	// 每 256 个 word 最多增加一个双字节 FF 头，另保留末尾补齐空间。
+	return size + ((size+2047)/2048)*2 + 8
+}
+
 // Pack 按 Sproto 规则压缩字节，返回独占缓冲且不修改输入。
 func Pack(src []byte) []byte {
-	// 每 256 个 word 最多增加一个双字节 FF 头，另保留末尾补齐空间。
-	maxsz := len(src) + ((len(src)+2047)/2048)*2 + 8
-	packed := make([]byte, maxsz, maxsz)
+	return packInto(make([]byte, packedBufferSize(len(src))), src)
+}
+
+// packInto 只接收本次调用独占且按 packedBufferSize 预留的输出。
+// EncodePacked 允许 src 位于同一缓冲后部，必须保留完整增长额度和八字节写出余量。
+func packInto(packed, src []byte) []byte {
 	offset := 0
 	for len(src) >= 8 {
 		word := binary.LittleEndian.Uint64(src)

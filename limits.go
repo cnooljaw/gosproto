@@ -55,6 +55,10 @@ func (budget *decodeBudget) add(count int) error {
 
 // EncodeWithLimits 在任何递归编码和大块分配前验证值、深度与预计输出大小。
 func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
+	return encodeWithLimits(message, limits, false)
+}
+
+func encodeWithLimits(message interface{}, limits Limits, packResult bool) ([]byte, error) {
 	limits, err := normalizeLimits(limits)
 	if err != nil {
 		return nil, err
@@ -75,9 +79,19 @@ func EncodeWithLimits(message interface{}, limits Limits) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	output := make([]byte, size)
-	encodeMessageInto(schema, value, output, &layout, binding)
+	capacity, start := size, 0
+	if packResult {
+		capacity = packedBufferSize(size)
+		// FF 头的最坏增长和八字节余量隔开读写游标，避免覆盖尚未消费的编码字节。
+		start = capacity - size
+	}
+	output := make([]byte, capacity)
+	encoded := output[start : start+size]
+	encodeMessageInto(schema, value, encoded, &layout, binding)
 	runtime.KeepAlive(message)
+	if packResult {
+		return packInto(output, encoded), nil
+	}
 	return output, nil
 }
 

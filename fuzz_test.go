@@ -41,6 +41,19 @@ func FuzzPackRoundTrip(f *testing.F) {
 		if err != nil || !bytes.Equal(output, expected) {
 			t.Fatalf("pack round trip: input=%d packed=%d output=%d expected=%d error=%v", len(data), len(packed), len(output), len(expected), err)
 		}
+		// 同一字节输入也经过组合入口，保护工作区重叠时的 FF 扩张和尾部写出。
+		message := &struct {
+			Binary []byte `sproto:"string,0"`
+		}{Binary: data}
+		encoded, err := sproto.Encode(message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		combined, err := sproto.EncodePacked(message)
+		want := sproto.Pack(encoded)
+		if err != nil || !bytes.Equal(combined, want) || cap(combined) != cap(want) {
+			t.Fatalf("packed workspace: input=%d err=%v", len(data), err)
+		}
 	})
 }
 
@@ -69,6 +82,11 @@ func FuzzCodecRoundTrip(f *testing.F) {
 		reencoded, err := sproto.EncodeWithLimits(&output, limits)
 		if err != nil || !bytes.Equal(encoded, reencoded) {
 			t.Fatalf("canonical bytes changed: %x -> %x error=%v", encoded, reencoded, err)
+		}
+		packed, err := sproto.EncodePacked(input)
+		want := sproto.Pack(encoded)
+		if err != nil || !bytes.Equal(packed, want) || cap(packed) != cap(want) {
+			t.Fatalf("packed composition changed: err=%v", err)
 		}
 	})
 }

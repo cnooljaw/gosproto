@@ -2,6 +2,8 @@ package sproto
 
 import (
 	"bytes"
+	"errors"
+	"math"
 	"reflect"
 	"testing"
 )
@@ -297,6 +299,102 @@ func TestDecode(t *testing.T) {
 			t.Log("encoded:", output)
 			t.Log("expected:", tc.Data)
 			t.Fatalf("test case %s failed", tc.Name)
+		}
+	}
+}
+
+type packedBufferMessage struct {
+	Payload []byte `sproto:"string,0"`
+}
+
+// EncodePacked 在所有 mask、FF 分段和短尾块上保持分步编码的字节、容量与独占结果。
+func TestEncodePackedWorkspace(t *testing.T) {
+	check := func(payload []byte) {
+		t.Helper()
+		storage := bytes.Repeat([]byte{0xee}, len(payload)+19)
+		copy(storage[3:], payload)
+		input := &packedBufferMessage{Payload: storage[3 : 3+len(payload)]}
+		snapshot := bytes.Clone(storage)
+		encoded, err := Encode(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := Pack(encoded)
+		got, err := EncodePacked(input)
+		if err != nil || !bytes.Equal(got, want) || cap(got) != cap(want) || !bytes.Equal(storage, snapshot) {
+			t.Fatalf("payload=%d len/cap=%d/%d want=%d/%d err=%v", len(payload), len(got), cap(got), len(want), cap(want), err)
+		}
+		previous := bytes.Clone(got)
+		input.Payload[0] ^= 0xff
+		if _, err := EncodePacked(input); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, previous) || !bytes.Equal(encoded[8:], payload) {
+			t.Fatal("previous packed or encoded output changed")
+		}
+	}
+	for _, words := range []int{0, 1, 255, 256, 257} {
+		for mask := 0; mask < 256; mask++ {
+			for tail := 0; tail < 8; tail++ {
+				payload := bytes.Repeat([]byte{0xa5}, words*8)
+				for bit := 0; bit < 8; bit++ {
+					value := byte(0)
+					if mask&(1<<bit) != 0 {
+						value = byte(0x80 + bit)
+					}
+					payload = append(payload, value)
+				}
+				payload = append(payload, bytes.Repeat([]byte{0xb7}, tail)...)
+				check(payload)
+			}
+		}
+	}
+	// 超过两个 FF 段后，初始编码头的压缩量不再足以抵消 FF 头增长。
+	for _, size := range []int{4095, 4096, 4097, 65535, 65536, 65537} {
+		check(bytes.Repeat([]byte{0xa5}, size))
+	}
+}
+
+// EncodePacked 比分步 Encode/Pack 少一次缓冲分配；相对比较也适用于检查插桩构建。
+func TestEncodePackedAllocation(t *testing.T) {
+	input := &packedBufferMessage{Payload: bytes.Repeat([]byte{0x91}, 256)}
+	var packed []byte
+	allocations := testing.AllocsPerRun(100, func() {
+		var err error
+		packed, err = EncodePacked(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	separate := testing.AllocsPerRun(100, func() {
+		encoded, err := Encode(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packed = Pack(encoded)
+	})
+	if len(packed) == 0 || separate-allocations != 1 {
+		t.Fatalf("combined=%v separate=%v, want one fewer allocation", allocations, separate)
+	}
+}
+
+// EncodePacked 在输入无效和默认预算耗尽时保持可判断错误且不返回部分输出。
+func TestEncodePackedErrors(t *testing.T) {
+	type unsigned struct {
+		Value uint64 `sproto:"integer,0"`
+	}
+	for _, sample := range []struct {
+		input any
+		want  error
+	}{
+		{nil, ErrNil},
+		{packedBufferMessage{}, ErrNonPtr},
+		{&unsigned{Value: math.MaxUint64}, ErrEncode},
+		{&packedBufferMessage{Payload: make([]byte, 8<<20)}, ErrLimit},
+	} {
+		got, err := EncodePacked(sample.input)
+		if !errors.Is(err, sample.want) || got != nil {
+			t.Fatalf("input=%T output=%x err=%v want=%v", sample.input, got, err, sample.want)
 		}
 	}
 }
