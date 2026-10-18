@@ -267,13 +267,16 @@ func encodeScalarInto(field *SprotoField, value reflect.Value, output []byte) (u
 // encodeInt64Slice 借用调用方切片读取，不创建反射元素或中间数值数组。
 func encodeInt64Slice(values []int64, width int, output []byte) int {
 	output[0] = byte(width)
+	remaining := output[1:]
 	if width == 4 {
-		for index, number := range values {
-			writeUint32(output[1+index*4:], uint32(number))
+		for _, number := range values {
+			writeUint32(remaining, uint32(number))
+			remaining = remaining[4:]
 		}
 	} else {
-		for index, number := range values {
-			writeUint64(output[1+index*8:], uint64(number))
+		for _, number := range values {
+			writeUint64(remaining, uint64(number))
+			remaining = remaining[8:]
 		}
 	}
 	return 1 + width*len(values)

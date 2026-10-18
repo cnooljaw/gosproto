@@ -1,5 +1,7 @@
 # 未发布
 
+- 原生 []int64 的4/8字节编码改用连续输出游标，让编译器消除重复切片边界检查；保留固定宽度写入检查、预检预算、signed/unsigned规则、wire/cap和独占输出，补充长短数组及后继字段的精确wire回归。
+
 - 有响应且声明 Request 的 RPC 请求在锁外预检并编码到独占 Pack 工作区，session 接纳后原地 Pack，省去中间 body 分配和复制；重复 session 仍返回限长限容的 raw body，错误顺序、等待登记与独占结果不变。
 
 - 有 Request、无 Response 的 RPC 通知复用私有 header 前缀和独占 Pack 工作区，省去一次中间 body 分配和复制；通知仍忽略 session、不登记等待，有响应请求的校验顺序、锁范围及重复 session 返回不变。
