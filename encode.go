@@ -28,8 +28,15 @@ func (layout *encodeLayout) add(value int) int {
 	if index < len(layout.local) {
 		layout.local[index] = uint32(value)
 	} else {
-		if layout.extra == nil {
-			layout.extra = make([]uint32, 0, 128)
+		if len(layout.extra) == cap(layout.extra) {
+			capacity := cap(layout.extra) * 2
+			if capacity == 0 {
+				capacity = 128
+			}
+			// 只在新记录确实需要空间时增长，不按尚未验证的数组长度预分配。
+			extra := make([]uint32, len(layout.extra), capacity)
+			copy(extra, layout.extra)
+			layout.extra = extra
 		}
 		layout.extra = append(layout.extra, uint32(value))
 	}

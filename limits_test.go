@@ -414,19 +414,22 @@ func TestEncodeTracksCurrentValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := append([]byte(nil), first...)
-	for _, values := range [][]int64{{1, math.MaxInt64, -1}, {}, nil} {
-		input.Flag = nil
-		input.Values = values
-		input.Children = append([]*child{nil, {}, {Value: &number}}, make([]*child, 96)...)
-		encoded, err := sproto.Encode(input)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var output document
-		if _, err := sproto.Decode(encoded, &output); err != nil || !reflect.DeepEqual(input.Values, output.Values) ||
-			output.Flag != nil || len(output.Children) != len(input.Children) || output.Children[0].Value != nil ||
-			output.Children[1].Value != nil || output.Children[2].Value == nil || *output.Children[2].Value != number {
-			t.Fatalf("changed message: %+v %v", output, err)
+	// 同一对象跨越多次临时存储增长后，头项数与数组宽度仍来自当前调用。
+	for _, count := range []int{96, 1024, 1056, 4096} {
+		for _, values := range [][]int64{{1, math.MaxInt64, -1}, {}, nil} {
+			input.Flag = nil
+			input.Values = values
+			input.Children = append([]*child{nil, {}, {Value: &number}}, make([]*child, count)...)
+			encoded, err := sproto.Encode(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output document
+			if _, err := sproto.Decode(encoded, &output); err != nil || !reflect.DeepEqual(input.Values, output.Values) ||
+				output.Flag != nil || len(output.Children) != len(input.Children) || output.Children[0].Value != nil ||
+				output.Children[1].Value != nil || output.Children[2].Value == nil || *output.Children[2].Value != number {
+				t.Fatalf("changed message: %+v %v", output, err)
+			}
 		}
 	}
 	if !bytes.Equal(first, snapshot) {
