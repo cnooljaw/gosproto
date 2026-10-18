@@ -243,7 +243,8 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 				var part int
 				var err error
 				if integers {
-					part, err = encodedIntegerRecordSize(field.st, value.Index(i), budget, depth+1, layout)
+					pointer := messageEncodePointer(value.Index(i), childBinding)
+					part, err = encodedIntegerRecordSize(field.st, pointer, budget, depth+1, layout)
 				} else {
 					part, err = encodedSize(field.st, value.Index(i), budget, depth+1, layout, childBinding)
 				}

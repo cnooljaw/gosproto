@@ -1,21 +1,17 @@
 package sproto
 
-import (
-	"fmt"
-	"reflect"
-)
+import "fmt"
 
 // encodedIntegerRecordSize 只用于数组入口已核对实际 Go 类型及全部字段 owner/形状的记录。
 // 保留与通用结构编码相同的深度、字段数、tag 间隔和字节预算，不缓存任何标量值。
-func encodedIntegerRecordSize(schema *SprotoType, value reflect.Value, budget *decodeBudget, depth int, layout *encodeLayout) (int, error) {
+func encodedIntegerRecordSize(schema *SprotoType, pointer encodePointer, budget *decodeBudget, depth int, layout *encodeLayout) (int, error) {
 	if depth > budget.limits.MaxDepth || budget.limits.MaxBytes < 2 {
 		return 0, ErrLimit
 	}
 	layoutIndex := layout.add(0)
-	if value.IsNil() {
+	if pointer.value == nil {
 		return 2, nil
 	}
-	pointer := messageEncodePointer(value, knownEncodeType(schema))
 	size, headers, lastTag := 2, 0, -1
 	for _, index := range schema.order {
 		field := schema.Fields[index]
@@ -52,13 +48,12 @@ func encodedIntegerRecordSize(schema *SprotoType, value reflect.Value, budget *d
 }
 
 // encodeIntegerRecordInto 复用同一次预检的布局，字段值仍逐个读取并写入独占输出。
-func encodeIntegerRecordInto(schema *SprotoType, value reflect.Value, output []byte, layout *encodeLayout) int {
+func encodeIntegerRecordInto(schema *SprotoType, pointer encodePointer, output []byte, layout *encodeLayout) int {
 	count := layout.next()
 	writeUint16(output, uint16(count))
-	if value.IsNil() {
+	if pointer.value == nil {
 		return 2
 	}
-	pointer := messageEncodePointer(value, knownEncodeType(schema))
 	headerOffset, bodyOffset, previous := 2, 2+count*2, -1
 	for _, index := range schema.order {
 		field := schema.Fields[index]

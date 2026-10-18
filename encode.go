@@ -216,7 +216,8 @@ func encodeFieldInto(field *SprotoField, value reflect.Value, output []byte, lay
 			for index := 0; index < value.Len(); index++ {
 				var length int
 				if integers {
-					length = encodeIntegerRecordInto(field.st, value.Index(index), output[offset+4:], layout)
+					pointer := messageEncodePointer(value.Index(index), childBinding)
+					length = encodeIntegerRecordInto(field.st, pointer, output[offset+4:], layout)
 				} else {
 					length = encodeMessageInto(field.st, value.Index(index), output[offset+4:], layout, childBinding)
 				}
