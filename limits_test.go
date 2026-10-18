@@ -562,10 +562,12 @@ func TestDoubleBitPatterns(t *testing.T) {
 
 // 同构整数记录数组与命名类型 wire 一致，稀疏 tag、空元素及预算边界不能因批量路径放宽。
 func TestIntegerRecordArrayBudgetsAndTags(t *testing.T) {
+	// 声明顺序故意不同于 tag 顺序，并夹带忽略字段；参考类型仍使用原顺序。
 	type record struct {
-		First  *int64 `sproto:"integer,0"`
-		Bridge *int64 `sproto:"integer,20000"`
-		Last   *int64 `sproto:"integer,40000"`
+		Last    *int64 `sproto:"integer,40000"`
+		Ignored string
+		First   *int64 `sproto:"integer,0"`
+		Bridge  *int64 `sproto:"integer,20000"`
 	}
 	type records struct {
 		Items []*record `sproto:"struct,0,array"`
