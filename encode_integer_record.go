@@ -65,11 +65,11 @@ func encodeIntegerRecordInto(schema *SprotoType, pointer encodePointer, output [
 			continue
 		}
 		if skip := skipTag(previous, field.Tag); skip > 0 {
-			writeUint16(output[headerOffset:], skip)
+			writeUint16(output[headerOffset:headerOffset+2:headerOffset+2], skip)
 			headerOffset += 2
 		}
 		header, length := encodeIntegerInto(bits, output[bodyOffset:])
-		writeUint16(output[headerOffset:], header)
+		writeUint16(output[headerOffset:headerOffset+2:headerOffset+2], header)
 		headerOffset += 2
 		previous = field.Tag
 		if header == 0 {
