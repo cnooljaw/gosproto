@@ -177,11 +177,11 @@ func decodeIntSlice(_ uint16, _ bool, data []byte, field *SprotoField, value ref
 		result := make([]int64, count)
 		if width == 4 {
 			for index := range result {
-				result[index] = int64(int32(readUint32(data[index*4:])))
+				result[index] = int64(int32(readUint32(data[index*4 : index*4+4 : index*4+4])))
 			}
 		} else {
 			for index := range result {
-				result[index] = int64(readUint64(data[index*8:]))
+				result[index] = int64(readUint64(data[index*8 : index*8+8 : index*8+8]))
 			}
 		}
 		*value.Addr().Interface().(*[]int64) = result
