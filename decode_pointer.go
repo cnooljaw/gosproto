@@ -11,8 +11,9 @@ type decodePointer struct {
 	value unsafe.Pointer
 }
 
-func messageDecodePointer(schema *SprotoType, value reflect.Value) decodePointer {
-	if !schema.nativeInt64Pointer || value.Type().Elem() != schema.typ {
+// exactNative 必须由调用点基于同一 value 即时核对原生能力及实际 Go 类型。
+func messageDecodePointer(value reflect.Value, exactNative bool) decodePointer {
+	if !exactNative {
 		return decodePointer{}
 	}
 	return decodePointer{value: value.UnsafePointer()}

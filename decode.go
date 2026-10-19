@@ -297,7 +297,8 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 		return 0, err
 	}
 	record := value.Elem()
-	pointer := messageDecodePointer(schema, value)
+	exactNative := schema.nativeInt64Pointer && record.Type() == schema.typ
+	pointer := messageDecodePointer(value, exactNative)
 	tag := 0
 	for index := 0; index < count; index++ {
 		entry := int(readUint16(chunk[2+index*2:]))
