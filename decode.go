@@ -301,7 +301,7 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 	pointer := messageDecodePointer(value, exactNative)
 	tag := 0
 	for index := 0; index < count; index++ {
-		entry := int(readUint16(chunk[2+index*2:]))
+		entry := int(readUint16(chunk[2+index*2 : 4+index*2 : 4+index*2]))
 		if entry%2 == 1 {
 			tag += (entry + 1) / 2
 			continue
