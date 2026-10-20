@@ -254,10 +254,12 @@ func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 			continue
 		}
 		// 零 mask 已在上方消费，普通 mask 至少有一个有效字节。
+		// 首遍已证明完整 word 的输出长度，固定视图让目标索引限于 0～7。
+		dst := unpacked[offset : offset+8 : offset+8]
 		used := 0
 		for mask := header; ; {
-			index := bits.TrailingZeros8(mask)
-			unpacked[offset+index] = src[used]
+			index := bits.TrailingZeros8(mask) & 7
+			dst[index] = src[used]
 			used++
 			mask &= mask - 1
 			if mask == 0 {
