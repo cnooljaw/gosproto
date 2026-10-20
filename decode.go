@@ -270,10 +270,12 @@ func decodeStructSlice(_ uint16, _ bool, data []byte, field *SprotoField, value 
 	}
 	result := reflect.MakeSlice(value.Type(), count, count)
 	var slots []unsafe.Pointer
+	nativeRecords := false
 	if count > 0 && field.Array && field.Wire == WireStructName && field.st != nil &&
 		value.Type().Elem() == reflect.PointerTo(field.st.typ) {
 		// 同步借用新切片的指针槽；实际元素类型已核对，不缓存地址。
 		slots = unsafe.Slice((*unsafe.Pointer)(result.UnsafePointer()), count)
+		nativeRecords = count >= 8 && canDecodeIntegerRecords(field.st)
 	}
 	for index := 0; index < count; index++ {
 		used, content, err := readChunk(data)
@@ -281,7 +283,12 @@ func decodeStructSlice(_ uint16, _ bool, data []byte, field *SprotoField, value 
 			return err
 		}
 		current := reflect.New(field.st.typ)
-		consumed, err := decodeMessage(content, field.st, current, budget)
+		var consumed int
+		if nativeRecords {
+			consumed, err = decodeIntegerRecord(content, field.st, decodePointer{value: current.UnsafePointer()}, budget)
+		} else {
+			consumed, err = decodeMessage(content, field.st, current, budget)
+		}
 		if err != nil {
 			return err
 		}
