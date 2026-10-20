@@ -74,3 +74,13 @@ func (pointer encodePointer) integer(offset uintptr) (uint64, bool) {
 	}
 	return uint64(*value), true
 }
+
+// integerRecordPointers 只在当前数组入口完成整数记录字段证明后借用已有指针槽。
+// 实际元素须恰为私有子schema的指针类型；命名指针仍按原反射路径读取。
+// 不复制或缓存消息地址，保持每个元素的nil语义及当前值读取。
+func integerRecordPointers(schema *SprotoType, value reflect.Value) []unsafe.Pointer {
+	if value.Len() == 0 || value.Type().Elem() != reflect.PointerTo(schema.typ) {
+		return nil
+	}
+	return unsafe.Slice((*unsafe.Pointer)(value.UnsafePointer()), value.Len())
+}

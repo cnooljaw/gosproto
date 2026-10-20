@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 	"reflect"
+	"unsafe"
 )
 
 const (
@@ -225,10 +226,19 @@ func encodeFieldInto(field *SprotoField, value reflect.Value, output []byte, lay
 		case WireStructName:
 			childBinding := bindEncodeChild(field, value, trusted)
 			integers := childBinding.native && field.st.int64Record && field.st.nativeIntegerFields()
+			var pointers []unsafe.Pointer
+			if integers {
+				pointers = integerRecordPointers(field.st, value)
+			}
 			for index := 0; index < value.Len(); index++ {
 				var length int
 				if integers {
-					pointer := messageEncodePointer(value.Index(index), childBinding)
+					var pointer encodePointer
+					if pointers != nil {
+						pointer = encodePointer{value: pointers[index]}
+					} else {
+						pointer = messageEncodePointer(value.Index(index), childBinding)
+					}
 					length = encodeIntegerRecordInto(field.st, pointer, output[offset+4:], layout)
 				} else {
 					length = encodeMessageInto(field.st, value.Index(index), output[offset+4:], layout, childBinding)

@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"runtime"
+	"unsafe"
 )
 
 // Limits 是编解码的本地资源预算；零值使用有限默认值，不改变 wire 格式。
@@ -239,11 +240,20 @@ func fieldSize(field *SprotoField, value reflect.Value, budget *decodeBudget, de
 
 			}
 			integers := childBinding.native && field.st.int64Record && field.st.nativeIntegerFields()
+			var pointers []unsafe.Pointer
+			if integers {
+				pointers = integerRecordPointers(field.st, value)
+			}
 			for i := 0; i < value.Len(); i++ {
 				var part int
 				var err error
 				if integers {
-					pointer := messageEncodePointer(value.Index(i), childBinding)
+					var pointer encodePointer
+					if pointers != nil {
+						pointer = encodePointer{value: pointers[i]}
+					} else {
+						pointer = messageEncodePointer(value.Index(i), childBinding)
+					}
 					part, err = encodedIntegerRecordSize(field.st, pointer, budget, depth+1, layout)
 				} else {
 					part, err = encodedSize(field.st, value.Index(i), budget, depth+1, layout, childBinding)
