@@ -229,12 +229,21 @@ func decodeStringSlice(_ uint16, _ bool, data []byte, _ *SprotoField, value refl
 		return err
 	}
 	result := reflect.MakeSlice(value.Type(), count, count)
+	// 只借用本次新切片；实际元素须恰为string，命名元素保留反射路径。
+	var slots []string
+	if count > 0 && value.Type().Elem() == reflect.TypeFor[string]() {
+		slots = unsafe.Slice((*string)(result.UnsafePointer()), count)
+	}
 	for index := 0; index < count; index++ {
 		used, content, err := readChunk(data)
 		if err != nil {
 			return err
 		}
-		result.Index(index).SetString(string(content))
+		if slots != nil {
+			slots[index] = string(content)
+		} else {
+			result.Index(index).SetString(string(content))
+		}
 		data = data[used:]
 	}
 	value.Set(result)
