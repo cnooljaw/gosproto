@@ -283,9 +283,10 @@ func decodeStructSlice(_ uint16, _ bool, data []byte, field *SprotoField, value 
 			return err
 		}
 		current := reflect.New(field.st.typ)
+		currentPointer := current.UnsafePointer()
 		var consumed int
 		if nativeRecords {
-			consumed, err = decodeIntegerRecord(content, field.st, decodePointer{value: current.UnsafePointer()}, budget)
+			consumed, err = decodeIntegerRecord(content, field.st, decodePointer{value: currentPointer}, budget)
 		} else {
 			consumed, err = decodeMessage(content, field.st, current, budget)
 		}
@@ -297,7 +298,7 @@ func decodeStructSlice(_ uint16, _ bool, data []byte, field *SprotoField, value 
 		}
 		if slots != nil {
 			// Go 指针赋值保留 GC 写屏障，不能改成字节复制或 uintptr 存储。
-			slots[index] = current.UnsafePointer()
+			slots[index] = currentPointer
 		} else {
 			result.Index(index).Set(current)
 		}
