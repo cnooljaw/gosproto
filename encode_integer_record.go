@@ -1,6 +1,10 @@
 package sproto
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+	"unsafe"
+)
 
 // encodedIntegerRecordSize 只用于数组入口已核对实际 Go 类型及全部字段 owner/形状的记录。
 // 保留与通用结构编码相同的深度、字段数、tag 间隔和字节预算，不缓存任何标量值。
@@ -48,8 +52,7 @@ func encodedIntegerRecordSize(schema *SprotoType, pointer encodePointer, budget 
 }
 
 // encodeIntegerRecordInto 复用同一次预检的布局，字段值仍逐个读取并写入独占输出。
-func encodeIntegerRecordInto(schema *SprotoType, pointer encodePointer, output []byte, layout *encodeLayout) int {
-	count := layout.next()
+func encodeIntegerRecordInto(schema *SprotoType, pointer encodePointer, output []byte, count int) int {
 	writeUint16(output, uint16(count))
 	if pointer.value == nil {
 		return 2
@@ -87,4 +90,36 @@ func encodeIntegerRecordInto(schema *SprotoType, pointer encodePointer, output [
 		}
 	}
 	return bodyOffset
+}
+
+// encodeIntegerRecordArrayInto 只消费本次预检形成的连续整数记录布局，不包含嵌套布局项。
+func encodeIntegerRecordArrayInto(field *SprotoField, value reflect.Value, output []byte, layout *encodeLayout, binding encodeBinding, pointers []unsafe.Pointer) int {
+	count := value.Len()
+	index, offset := 0, 0
+	for index < count {
+		cursor := layout.cursor
+		var headers []uint32
+		if cursor < len(layout.local) {
+			end := min(len(layout.local), cursor+count-index)
+			headers = layout.local[cursor:end:end]
+		} else {
+			start := cursor - len(layout.local)
+			end := start + count - index
+			headers = layout.extra[start:end:end]
+		}
+		layout.cursor += len(headers)
+		for _, header := range headers {
+			var pointer encodePointer
+			if pointers != nil {
+				pointer = encodePointer{value: pointers[index]}
+			} else {
+				pointer = messageEncodePointer(value.Index(index), binding)
+			}
+			length := encodeIntegerRecordInto(field.st, pointer, output[offset+4:], int(header))
+			writeUint32(output[offset:], uint32(length))
+			offset += 4 + length
+			index++
+		}
+	}
+	return offset
 }

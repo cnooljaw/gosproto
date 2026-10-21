@@ -38,7 +38,7 @@ func TestEncodeRecordPointerSlices(t *testing.T) {
 	previousGC := debug.SetGCPercent(1)
 	defer debug.SetGCPercent(previousGC)
 	values := []int64{0, MaxEmbeddedInt, MaxEmbeddedInt + 1, -1, MinInt32, MinInt32 - 1, math.MinInt64, math.MaxInt64}
-	for _, count := range []int{0, 1, 3, 32, 33, 129} {
+	for _, count := range []int{0, 1, 3, 7, 8, 31, 32, 33, 64, 129} {
 		input := &document{Records: make([]*record, count), Named: make(slice, count), Pointers: make([]pointer, count)}
 		reference := &genericDocument{Records: make([]*genericRecord, count), Named: make([]*genericRecord, count), Pointers: make([]*genericRecord, count)}
 		var first, last int64
