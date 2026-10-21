@@ -14,15 +14,16 @@ type fuzzIntegerRecord struct {
 }
 
 type fuzzDocument struct {
-	Next     *fuzzDocument        `sproto:"struct,0"`
-	Children []*fuzzDocument      `sproto:"struct,1,array"`
-	Names    []string             `sproto:"string,2,array"`
-	Flags    []bool               `sproto:"boolean,3,array"`
-	Values   []int64              `sproto:"integer,4,array"`
-	Number   float64              `sproto:"double,5"`
-	Binary   []byte               `sproto:"string,6"`
-	Native   *int64               `sproto:"integer,7"`
-	Records  []*fuzzIntegerRecord `sproto:"struct,8,array"`
+	NativeText *string              `sproto:"string,9"`
+	Next       *fuzzDocument        `sproto:"struct,0"`
+	Children   []*fuzzDocument      `sproto:"struct,1,array"`
+	Names      []string             `sproto:"string,2,array"`
+	Flags      []bool               `sproto:"boolean,3,array"`
+	Values     []int64              `sproto:"integer,4,array"`
+	Number     float64              `sproto:"double,5"`
+	Binary     []byte               `sproto:"string,6"`
+	Native     *int64               `sproto:"integer,7"`
+	Records    []*fuzzIntegerRecord `sproto:"struct,8,array"`
 }
 
 // 验证任意有限字节的 pack/unpack 保留内容，只追加八字节对齐的零填充。
@@ -92,12 +93,14 @@ func FuzzCodecRoundTrip(f *testing.F) {
 }
 
 func makeFuzzDocument(data []byte, bits uint64) *fuzzDocument {
+	text := string(data)
 	number := int64(bits)
 	other := int64(^bits)
 	root := &fuzzDocument{
-		Native:  &number,
-		Records: []*fuzzIntegerRecord{{First: &number, Last: &other}, nil, {}},
-		Names:   []string{"", string(data)}, Flags: []bool{false, true},
+		NativeText: &text,
+		Native:     &number,
+		Records:    []*fuzzIntegerRecord{{First: &number, Last: &other}, nil, {}},
+		Names:      []string{"", string(data)}, Flags: []bool{false, true},
 		Values: []int64{-1, int64(bits)}, Number: math.Float64frombits(bits),
 		Binary:   append([]byte{}, data...),
 		Children: []*fuzzDocument{{Number: math.Float64frombits(bits), Native: &number}, {}},

@@ -41,9 +41,10 @@ type SprotoField struct {
 	valueType  reflect.Type
 	int64Slice bool
 
-	encOwner           *SprotoType // 绑定 offset 的实际结构体，防止公开 Fields 替换后借用其他布局。
-	encOffset          uintptr
-	nativeInt64Pointer bool
+	encOwner            *SprotoType // 绑定 offset 的实际结构体，防止公开 Fields 替换后借用其他布局。
+	encOffset           uintptr
+	nativeInt64Pointer  bool
+	nativeStringPointer bool
 }
 
 // parse filed meta information
@@ -211,6 +212,7 @@ func (sf *SprotoField) init(f *reflect.StructField) error {
 	sf.index = f.Index
 	sf.encOffset = f.Offset
 	sf.nativeInt64Pointer = f.Type == reflect.TypeFor[*int64]()
+	sf.nativeStringPointer = f.Type == reflect.TypeFor[*string]()
 	if err := sf.parse(tagString); err != nil {
 		return err
 	}
@@ -221,14 +223,15 @@ func (sf *SprotoField) init(f *reflect.StructField) error {
 }
 
 type SprotoType struct {
-	typ                reflect.Type // 当前结构体的 Go 类型，用于构造独占子对象。
-	Name               string       // struct name
-	Fields             []*SprotoField
-	tagMap             map[int]int // tag -> fileds index
-	order              []int       // list of struct field numbers in tag order
-	dense              []int       // 低编号稠密字段的 index+1；零表示未知，长度至多 128。
-	nativeInt64Pointer bool        // 原始 Go 类型是否包含原生 *int64 字段。
-	int64Record        bool        // 所有声明的协议字段都是原生 *int64，仍需在每次绑定时核对公开描述。
+	typ                 reflect.Type // 当前结构体的 Go 类型，用于构造独占子对象。
+	Name                string       // struct name
+	Fields              []*SprotoField
+	tagMap              map[int]int // tag -> fileds index
+	order               []int       // list of struct field numbers in tag order
+	dense               []int       // 低编号稠密字段的 index+1；零表示未知，长度至多 128。
+	nativeInt64Pointer  bool
+	nativeStringPointer bool // 原始 Go 类型是否包含原生 *string 字段。
+	int64Record         bool // 所有声明的协议字段都是原生 *int64，仍需在每次绑定时核对公开描述。
 }
 
 func (st *SprotoType) Len() int { return len(st.order) }
@@ -296,6 +299,7 @@ func getSprotoTypeLocked(t reflect.Type) (*SprotoType, error) {
 		}
 
 		st.nativeInt64Pointer = st.nativeInt64Pointer || sf.nativeInt64Pointer
+		st.nativeStringPointer = st.nativeStringPointer || sf.nativeStringPointer
 		if sf.Tag >= 0 && !sf.nativeInt64Pointer {
 			st.int64Record = false
 		}

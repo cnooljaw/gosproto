@@ -325,7 +325,7 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 		return 0, err
 	}
 	record := value.Elem()
-	exactNative := schema.nativeInt64Pointer && record.Type() == schema.typ
+	exactNative := (schema.nativeInt64Pointer || schema.nativeStringPointer) && record.Type() == schema.typ
 	pointer := messageDecodePointer(value, exactNative)
 	tag := 0
 	for index := 0; index < count; index++ {
@@ -364,6 +364,14 @@ func decodeMessage(chunk []byte, schema *SprotoType, value reflect.Value, budget
 			result := new(int64)
 			*result = int64(bits)
 			if !pointer.setInteger(schema, field, result) {
+				record.Field(field.index[0]).Set(reflect.ValueOf(result))
+			}
+			continue
+		}
+		if field.nativeStringPointer {
+			result := new(string)
+			*result = string(content)
+			if !pointer.setString(schema, field, result) {
 				record.Field(field.index[0]).Set(reflect.ValueOf(result))
 			}
 			continue
