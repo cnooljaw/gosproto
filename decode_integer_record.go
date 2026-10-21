@@ -48,25 +48,35 @@ func decodeIntegerRecord(chunk []byte, schema *SprotoType, pointer decodePointer
 		if tag > 65535 {
 			return 0, ErrDecode
 		}
-		hasInline := entry != 0
-		inline := uint16(entry/2 - 1)
-		var content []byte
-		if !hasInline {
-			used, data, err := readChunk(chunk[total:])
-			if err != nil {
-				return 0, err
-			}
-			total += used
-			content = data
-		}
 		field := schema.FieldByTag(tag)
 		tag++
-		if field == nil {
-			continue
-		}
-		bits, err := scalarBits(inline, hasInline, content)
-		if err != nil {
-			return 0, err
+		var bits uint64
+		if entry != 0 {
+			if field == nil {
+				continue
+			}
+			bits = uint64(entry/2 - 1)
+		} else {
+			data := chunk[total:]
+			if len(data) < 4 {
+				return 0, ErrDecode
+			}
+			size := uint64(readUint32(data))
+			if size > uint64(len(data)-4) {
+				return 0, ErrDecode
+			}
+			total += 4 + int(size)
+			if field == nil {
+				continue
+			}
+			switch size {
+			case 4:
+				bits = uint64(int64(int32(readUint32(data[4:8]))))
+			case 8:
+				bits = readUint64(data[4:12])
+			default:
+				return 0, ErrDecode
+			}
 		}
 		result := new(int64)
 		*result = int64(bits)
