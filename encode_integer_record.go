@@ -71,23 +71,19 @@ func encodeIntegerRecordInto(schema *SprotoType, pointer encodePointer, output [
 			writeUint16(output[headerOffset:headerOffset+2:headerOffset+2], skip)
 			headerOffset += 2
 		}
-		// inline 整数只写头部，避免提前构造未使用的内容切片。
-		var header uint16
-		var length int
-		var body []byte
-		if bits <= MaxEmbeddedInt {
-			header = uint16((bits + 1) * 2)
-		} else {
-			body = output[bodyOffset:]
-			header, length = encodeIntegerInto(bits, body)
-		}
-		writeUint16(output[headerOffset:headerOffset+2:headerOffset+2], header)
-		headerOffset += 2
 		previous = field.Tag
-		if header == 0 {
-			writeUint32(body, uint32(length))
-			bodyOffset += 4 + length
+		// inline 路径写完头部后立即继续，外置路径独立完成内容长度与写出。
+		if bits <= MaxEmbeddedInt {
+			writeUint16(output[headerOffset:headerOffset+2:headerOffset+2], uint16((bits+1)*2))
+			headerOffset += 2
+			continue
 		}
+		body := output[bodyOffset:]
+		_, length := encodeIntegerInto(bits, body)
+		writeUint16(output[headerOffset:headerOffset+2:headerOffset+2], 0)
+		writeUint32(body, uint32(length))
+		headerOffset += 2
+		bodyOffset += 4 + length
 	}
 	return bodyOffset
 }
