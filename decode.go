@@ -177,11 +177,29 @@ func decodeIntSlice(_ uint16, _ bool, data []byte, field *SprotoField, value ref
 	if field.int64Slice {
 		result := make([]int64, count)
 		if width == 4 {
-			for index := range result {
+			index := 0
+			for ; index < len(result)-3; index += 4 {
+				values := result[index : index+4 : index+4]
+				block := data[index*4 : index*4+16 : index*4+16]
+				values[0] = int64(int32(readUint32(block[0:4:4])))
+				values[1] = int64(int32(readUint32(block[4:8:8])))
+				values[2] = int64(int32(readUint32(block[8:12:12])))
+				values[3] = int64(int32(readUint32(block[12:16:16])))
+			}
+			for ; index < len(result); index++ {
 				result[index] = int64(int32(readUint32(data[index*4 : index*4+4 : index*4+4])))
 			}
 		} else {
-			for index := range result {
+			index := 0
+			for ; index < len(result)-3; index += 4 {
+				values := result[index : index+4 : index+4]
+				block := data[index*8 : index*8+32 : index*8+32]
+				values[0] = int64(readUint64(block[0:8:8]))
+				values[1] = int64(readUint64(block[8:16:16]))
+				values[2] = int64(readUint64(block[16:24:24]))
+				values[3] = int64(readUint64(block[24:32:32]))
+			}
+			for ; index < len(result); index++ {
 				result[index] = int64(readUint64(data[index*8 : index*8+8 : index*8+8]))
 			}
 		}

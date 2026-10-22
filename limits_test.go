@@ -322,7 +322,7 @@ func TestNativeIntegerArrayWire(t *testing.T) {
 		if width == 8 {
 			pattern = []int64{math.MinInt64, math.MaxInt64, math.MinInt32 - 1, math.MaxInt32 + 1, -1, 0, 1}
 		}
-		for _, length := range []int{1, 2, 3, 4, 7, 8, 9, 31, 32, 33, 63, 64, 65, 127, 128, 129, 895, 896, 897, 4096} {
+		for _, length := range []int{1, 2, 3, 4, 5, 7, 8, 9, 31, 32, 33, 63, 64, 65, 127, 128, 129, 895, 896, 897, 4096} {
 			input := &document{Values: make([]int64, length), Tail: []byte{0x51, 0xff, 0}}
 			for index := range input.Values {
 				input.Values[index] = pattern[index%len(pattern)]
