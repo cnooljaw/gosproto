@@ -232,6 +232,10 @@ func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 		remaining = remaining[consumed:]
 	}
 	unpacked := make([]byte, size)
+	// 经完整预检后恢复；限制单次汇编循环规模，小包和更大输入沿用Go路径。
+	if len(src) >= 128 && len(src) <= 1<<20 && unpackVector(unpacked, src) {
+		return unpacked, nil
+	}
 	offset := 0
 	for len(src) > 0 {
 		header := src[0]
