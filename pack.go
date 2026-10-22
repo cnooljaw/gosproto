@@ -195,41 +195,46 @@ func UnpackWithLimit(src []byte, maxBytes int) ([]byte, error) {
 		return nil, ErrInvalidLimits
 	}
 	// 首次只扫描 tag/连续块长度，在分配前确认完整边界及有限的确切输出长度。
-	size := 0
-	for remaining := src; len(remaining) > 0; {
-		header := remaining[0]
-		consumed, produced := 1, 8
-		if header == 0 {
-			if len(remaining) >= 2 && remaining[1] == 0 {
-				words := (maxBytes - size) / 8
-				if words < 2 {
-					return nil, ErrLimit
+	size, err, handled := unpackSizeFast(src, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	if !handled {
+		for remaining := src; len(remaining) > 0; {
+			header := remaining[0]
+			consumed, produced := 1, 8
+			if header == 0 {
+				if len(remaining) >= 2 && remaining[1] == 0 {
+					words := (maxBytes - size) / 8
+					if words < 2 {
+						return nil, ErrLimit
+					}
+					// 多检查一个零 mask 即可判定超额，不为小预算扫描整段大输入。
+					end := min(len(remaining), words+1)
+					run := 2 + zeroHeaderPrefix(remaining[2:end])
+					if run > words {
+						return nil, ErrLimit
+					}
+					consumed, produced = run, run*8
 				}
-				// 多检查一个零 mask 即可判定超额，不为小预算扫描整段大输入。
-				end := min(len(remaining), words+1)
-				run := 2 + zeroHeaderPrefix(remaining[2:end])
-				if run > words {
-					return nil, ErrLimit
+			} else if header == 0xff {
+				if len(remaining) < 2 {
+					return nil, ErrUnpack
 				}
-				consumed, produced = run, run*8
+				produced = (int(remaining[1]) + 1) * 8
+				consumed = 2 + produced
+			} else {
+				consumed += bits.OnesCount8(header)
 			}
-		} else if header == 0xff {
-			if len(remaining) < 2 {
+			if consumed > len(remaining) {
 				return nil, ErrUnpack
 			}
-			produced = (int(remaining[1]) + 1) * 8
-			consumed = 2 + produced
-		} else {
-			consumed += bits.OnesCount8(header)
+			if produced > maxBytes-size {
+				return nil, ErrLimit
+			}
+			size += produced
+			remaining = remaining[consumed:]
 		}
-		if consumed > len(remaining) {
-			return nil, ErrUnpack
-		}
-		if produced > maxBytes-size {
-			return nil, ErrLimit
-		}
-		size += produced
-		remaining = remaining[consumed:]
 	}
 	unpacked := make([]byte, size)
 	// 经完整预检后恢复；限制单次汇编循环规模，小包和更大输入沿用Go路径。
