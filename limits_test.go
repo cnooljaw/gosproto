@@ -362,6 +362,20 @@ func TestNativeIntegerArrayWire(t *testing.T) {
 			if err := sproto.DecodePacked(packed, &unpacked); err != nil || !reflect.DeepEqual(&unpacked, input) {
 				t.Fatalf("decode packed array width=%d length=%d err=%v", width, length, err)
 			}
+			// 同一 wire 的起点偏移覆盖非对齐视图，解码不得借用源缓冲。
+			for start := 0; start < 8; start++ {
+				storage := make([]byte, start+len(encoded)+8)
+				copy(storage[start:], encoded)
+				var shifted document
+				used, err := sproto.Decode(storage[start:start+len(encoded)], &shifted)
+				if err != nil || used != len(encoded) || !reflect.DeepEqual(&shifted, input) {
+					t.Fatalf("unaligned decode start=%d width=%d length=%d err=%v", start, width, length, err)
+				}
+				shifted.Values[0] ^= 0x71
+				if !bytes.Equal(storage[start:start+len(encoded)], encoded) {
+					t.Fatal("unaligned result aliases input")
+				}
+			}
 			decoded.Values[0] ^= 0x33
 			decoded.Tail[0] ^= 0x22
 			if !reflect.DeepEqual(&decodedAgain, input) || !reflect.DeepEqual(&unpacked, input) ||

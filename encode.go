@@ -294,7 +294,18 @@ func encodeScalarInto(field *SprotoField, value reflect.Value, output []byte) (u
 func encodeInt64Slice(values []int64, width int, output []byte) int {
 	output[0] = byte(width)
 	remaining := output[1:]
-	if width == 4 {
+	if nativeUnalignedLittleEndian && len(values) >= 32 {
+		// 较长数组在完整预检后固定到输出区间，再同步写无指针整数视图；短数组保留原循环。
+		if width == 8 {
+			copy(remaining[:len(values)*8], unsafe.Slice((*byte)(unsafe.Pointer(&values[0])), len(values)*8))
+		} else {
+			body := remaining[:len(values)*4]
+			numbers := unsafe.Slice((*int32)(unsafe.Pointer(&body[0])), len(values))
+			for index, number := range values {
+				numbers[index] = int32(number)
+			}
+		}
+	} else if width == 4 {
 		for _, number := range values {
 			writeUint32(remaining, uint32(number))
 			remaining = remaining[4:]

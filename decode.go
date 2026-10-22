@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math"
 	"reflect"
+	"runtime"
 	"unsafe"
 )
 
@@ -155,6 +156,9 @@ func decodeBoolSlice(_ uint16, _ bool, data []byte, _ *SprotoField, value reflec
 	return nil
 }
 
+// nativeUnalignedLittleEndian 仅在支持非对齐读取的小端架构启用原生整数数组访问。
+const nativeUnalignedLittleEndian = runtime.GOARCH == "386" || runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
+
 func decodeIntSlice(_ uint16, _ bool, data []byte, field *SprotoField, value reflect.Value, budget *decodeBudget) error {
 	// 官方接受空内容或仅有宽度前缀的空数组；非空数组必须先校验宽度。
 	if len(data) <= 1 {
@@ -189,6 +193,9 @@ func decodeIntSlice(_ uint16, _ bool, data []byte, field *SprotoField, value ref
 			for ; index < len(result); index++ {
 				result[index] = int64(int32(readUint32(data[index*4 : index*4+4 : index*4+4])))
 			}
+		} else if nativeUnalignedLittleEndian && count >= 32 {
+			// 至少256B的无指针整数体在完整预检后复制；小数组保留原循环。
+			copy(unsafe.Slice((*byte)(unsafe.Pointer(&result[0])), len(data)), data)
 		} else {
 			index := 0
 			for ; index < len(result)-3; index += 4 {
