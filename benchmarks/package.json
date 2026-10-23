@@ -1,0 +1,28 @@
+{
+  "name": "sproto-codec-benchmarks",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "build": "npm --prefix ../typescript run build && tsc -p tsconfig.json",
+    "go": "node scripts/go.mjs",
+    "check": "npm run build && node scripts/go.mjs test ./go -timeout=2m && node dist/representative_benchmark.js --mode check && node dist/protocol_benchmark.js --check && node scripts/benchmark-sproto-api.mjs --check",
+    "bench:protocol": "npm run build && node scripts/with-local-go.mjs scripts/benchmark-protocol.mjs",
+    "bench:representative": "npm run build && node scripts/with-local-go.mjs scripts/benchmark-representative.mjs",
+    "bench:api": "npm run build && node scripts/benchmark-sproto-api.mjs",
+    "profile:protocol": "npm run build && node scripts/with-local-go.mjs scripts/profile-protocol.mjs",
+    "analyze:pack": "npm run build && node scripts/analyze-sproto-pack.mjs",
+    "generate": "node scripts/generate-benchmark-schema.mjs",
+    "check:oracle": "python3 scripts/benchmark-oracle.py && python3 scripts/benchmark-oracle.py --correctness"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.15.0"
+  },
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "2.15.0",
+    "@types/node": "22.20.3",
+    "typescript": "5.9.3"
+  }
+}

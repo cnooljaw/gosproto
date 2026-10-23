@@ -1,6 +1,6 @@
 # gosproto
 
-Go 实现的 [Sproto](https://github.com/cloudwu/sproto) 编解码库，支持结构体编码、0 packing 和原生 `type/session` RPC。运行时使用纯 Go，不需要 C 或 Lua。库只处理协议字节、类型与 session 关联，不管理连接、网络分帧、业务 Handler、goroutine 或阻塞调用。
+包含Go库、TypeScript实现及跨语言Benchmark的 [Sproto](https://github.com/cloudwu/sproto) 项目。Go库支持结构体编码、0 packing 和原生 `type/session` RPC。Go库无需 C 或 Lua 运行时；ARM64默认包含专用汇编，`-tags purego` 使用Go回退。库只处理协议字节、类型与 session 关联，不管理连接、网络分帧、业务 Handler、goroutine 或阻塞调用。
 
 ## 安装
 
@@ -240,14 +240,24 @@ SPROTO_ORACLE_DIR=/path/to/sproto go test -run '^(TestOfficialOracle|TestOfficia
 
 完整数值边界向量由官方从独立 Lua 输入编码，再与 Go 编码逐字节比较并验证 Go 解码；另用官方解码核对四字节负整数数组。官方源码保持原样，Go 不复制该错误解码。固定向量、有限 fuzz 和一次跨语言对照不等于所有输入已被验证。
 
-## Benchmark
+## TypeScript
+
+[typescript/](typescript/README.md) 维护单文件Sproto实现，支持复制TS源码或构建后的JS使用，不要求npm发布。当前仅验证Node，浏览器、Laya、Cocos见 [待办](docs/TODO.md)。使用方保留许可证和来源指纹，不各自维护优化副本。
+
+## Benchmark 与设计资料
+
+[独立Benchmark](benchmarks/README.md) 比较Go/TS的Sproto与Protobuf，区分正文、Pack/Unpack、原生组合和应用帧；可独立于GSR运行。
 
 ```sh
-go test -run '^$' -bench . -benchmem
+npm --prefix typescript ci
+npm --prefix benchmarks ci
+npm --prefix benchmarks run check
 ```
 
-性能随 schema、载荷和机器变化，请在实际目标环境中测量。
+[当前优化状态](docs/GOSPROTO-OPTIMIZATION-STATUS.md) · [历史报告](docs/benchmarks/README.md) · [迁移说明](docs/REPOSITORY-MIGRATION.md) · [开发规范](AGENTS.md)
 
 ## 许可证
 
-[MIT](LICENSE)，保留 xjdrew/gosproto 的原始版权。本项目从其 v0.1.0 独立维护，版本变化见 [CHANGES.md](CHANGES.md)。
+Go库使用 [MIT](LICENSE)，保留 xjdrew/gosproto 的原始版权。本项目从其 v0.1.0 独立维护，版本变化见 [CHANGES.md](CHANGES.md)。
+
+TypeScript实现保留上游独立的 [BSD-2-Clause许可证](typescript/LICENSE)，不能用根目录MIT覆盖。

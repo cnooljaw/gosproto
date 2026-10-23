@@ -19,9 +19,26 @@ jobs:
       - name: Unit, official oracle, race and vet
         run: |
           SPROTO_ORACLE_DIR="$RUNNER_TEMP/sproto-oracle" go test -race ./... -timeout=2m
+          go test -tags purego ./... -timeout=2m
           go vet ./...
       - name: Bounded fuzz
         run: |
           for target in FuzzDecode FuzzPackRoundTrip FuzzCodecRoundTrip; do
             go test -run '^$' -fuzz "^${target}$" -fuzztime=30s -parallel=2 || exit 1
           done
+
+  typescript-and-benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - run: npm --prefix typescript ci
+      - run: npm --prefix benchmarks ci
+      - run: npm --prefix typescript test
+      - run: npm --prefix benchmarks run check
+      - run: python3 benchmarks/tools/go-pairs/test_run.py
