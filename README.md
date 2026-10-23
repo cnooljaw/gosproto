@@ -7,7 +7,7 @@
 需要 Go 1.24 或更高版本。
 
 ```sh
-go get github.com/cnooljaw/gosproto@v0.4.0
+go get github.com/cnooljaw/gosproto@v1.0.0
 ```
 
 ## 快速开始

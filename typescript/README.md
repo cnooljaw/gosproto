@@ -2,6 +2,8 @@
 
 与Go库同仓维护的Sproto实现，源自 sealindx/sproto-ts 提交 `bbee46fd76e2c9a7401ff9efd1dcadb538908130`，保留 [BSD-2-Clause许可证](LICENSE)。当前只验收 Node.js；直接依赖 node:buffer，浏览器、Laya、Cocos [待验证](../docs/TODO.md)。
 
+[运行时兼容性检查](../docs/TYPESCRIPT-RUNTIME-COMPATIBILITY.md) 已复现当前入口在浏览器加载失败，以及直接传入 Uint8Array 的错误行为。显式 Buffer 适配的浏览器探针通过；小游戏、原生及实际引擎工程仍需分别验收。
+
 ## 构建与测试
 
 需要 Node >=22.15.0：

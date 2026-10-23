@@ -1,4 +1,13 @@
-# 未发布
+# v1.0.0（2026-10-23）
+
+- 发布 Go 编解码、Pack/Unpack、EncodePacked 和原生 RPC 工作区优化，包含受控的类型化访问、ARM64 汇编及 purego/其他架构回退；详细条目见下文。
+- 相对 v0.4.0 保持公开 API、官方 wire、默认资源预算、错误顺序、失败原子性、结果独占及既有 buffer cap；无需修改调用代码或重新生成协议类型。
+- 同仓维护 TypeScript 权威源码、独立 Go/TS Benchmark、固定官方向量和历史优化证据；生产 Go 库不依赖这些工程或 GSR。
+- 记录 TS 运行时兼容边界：正式支持仅验收 Node，当前入口依赖 `node:buffer`；浏览器显式适配探针不构成 Laya/Cocos Web、小游戏或原生支持。详见 [兼容性报告](docs/TYPESCRIPT-RUNTIME-COMPATIBILITY.md)。TS 工程保持 private，本次不发布 npm 包。
+
+升级方式：`go get github.com/cnooljaw/gosproto@v1.0.0`。需要 Go >= 1.24。使用方依赖升级独立执行。
+
+以下保留各优化切片的测量结果与适用边界，不宣称所有消息、平台或机器全面提速。
 
 - ARM64非purego将连续普通word用原生位图与VTBL批量压紧，FF合并与短尾仍走Go；只在限定长度且至少两个连续普通word时进入原生循环。固定4KiB只读置换表，保留原输出容量、共享工作区间隔、源不变及官方wire。M2整数EncodePacked两轮约改善35%，大型约14%～18%，小包及ASCII的局部差异见GSR收尾报告。
 - 编译期平台开关使purego及其他架构完全移除批量入口，包括无用的参数切片检查；新增全mask/FF停止/短尾/阈值大输入/交替FF共享工作区差分及只读源/输出保护页验证。

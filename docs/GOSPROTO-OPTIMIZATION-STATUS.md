@@ -1,5 +1,7 @@
 # gosproto 优化状态
 
+2026-10-23 v1.0.0：版本收录Go优化版、TS权威源码、独立Benchmark及兼容性检查文档；升级入口为 `go get github.com/cnooljaw/gosproto@v1.0.0`。TS工程仍为private，正式支持仅验收Node；浏览器/Laya/Cocos的Web、小游戏与原生边界见[检查报告](TYPESCRIPT-RUNTIME-COMPATIBILITY.md)。GSR等使用方依赖升级另行执行。下文“尚未推送或发布”为此前优化收尾时的记录。
+
 2026-10-23：Go库、TS权威源码、独立Benchmark与性能资料已整理到本仓；[迁移说明](REPOSITORY-MIGRATION.md)记录来源、消费副本与验证边界。新目录以已提交完整版本检出，旧临时工作树及其未提交删除保持原样。浏览器/Laya/Cocos见[待办](TODO.md)。
 
 2026-10-22：本轮既定性能优化计划已完成并验收。前轮原生预检已提交gosproto `6b0430e`；最后的普通word Pack、准入微调及回归已于2026-10-23本地提交为 `3c505c3`，本次收尾资料随GSR提交归档；尚未推送或发布。GSR正式依赖仍v0.4.0，本地优化均由临时modfile验证，无永久replace。
