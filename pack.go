@@ -119,6 +119,18 @@ func packInto(packed, src []byte) []byte {
 			src = src[consumed:]
 			continue
 		}
+		if packWordsEnabled && len(src) >= 128 && len(src) <= 1<<20 {
+			// 至少两个连续普通word再承担批量入口成本；FF交给已有合并循环。
+			next := binary.LittleEndian.Uint64(src[8:])
+			if (next-0x0101010101010101)&^next&0x8080808080808080 != 0 {
+				written, consumed := packWordsFast(packed[offset:], src)
+				if consumed > 0 {
+					offset += written
+					src = src[consumed:]
+					continue
+				}
+			}
+		}
 		// 去掉至多两个置位后是否为零，比普通路径完整计数更直接。
 		remaining := header & (header - 1)
 		if remaining&(remaining-1) == 0 {
