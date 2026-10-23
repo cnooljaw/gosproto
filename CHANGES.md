@@ -1,3 +1,11 @@
+# v1.0.1（2026-10-23）
+
+- 将历史Benchmark原始采样、汇编输出、源码快照、实验脚本、迁移来源清单及GSR旧资料移至[Release归档附件](https://github.com/cnooljaw/gosproto/releases/tag/v1.0.1)，保留逐文件SHA256、来源提交与完整原始字节；v1.0.0标签及Git历史保持原样。
+- 仓库保留最终结果摘要、完整72项对照、小型归档索引和长期设计原则；整理历史链接与文档入口，新增历史实验输出忽略规则。
+- 活跃Benchmark、固定官方向量、生成夹具、锁文件及fuzz回归继续维护；Go/TS生产源码、API、wire、预算、失败原子性、独占结果和buffer cap不变。
+
+升级方式：`go get github.com/cnooljaw/gosproto@v1.0.1`。需要Go >= 1.24；TS仍仅验收Node，npm包保持private。
+
 # v1.0.0（2026-10-23）
 
 - 发布 Go 编解码、Pack/Unpack、EncodePacked 和原生 RPC 工作区优化，包含受控的类型化访问、ARM64 汇编及 purego/其他架构回退；详细条目见下文。

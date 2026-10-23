@@ -4,7 +4,7 @@
 
 ## 1. 阶段结论和基线
 
-TS 当前实现与第五轮验收已提交为 GSR `9801808`。在既定 Node.js 参考客户端、五种代表性消息的原生 pencode/pdecode 上，十项耗时中位数均低于同次 Protobuf；最终 250 项、1250 个计时样本中没有 SP 项中位数回退超过 10%。9560 组新旧差分、20 组官方 C/Lua 向量与 Go/TS Plain/MAC 集成 7/7 通过。详细范围见 [第五轮验收](benchmarks/2026-10-15-sproto-round5/RESULTS.md)。
+TS 当前实现与第五轮验收已提交为 GSR `9801808`。在既定 Node.js 参考客户端、五种代表性消息的原生 pencode/pdecode 上，十项耗时中位数均低于同次 Protobuf；最终 250 项、1250 个计时样本中没有 SP 项中位数回退超过 10%。9560 组新旧差分、20 组官方 C/Lua 向量与 Go/TS Plain/MAC 集成 7/7 通过。详细范围见 [第五轮验收](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round5/RESULTS.md)。
 
 这足以支持当前阶段收尾，不能扩展成“所有 Sproto 输入都快于 PB”。未验证浏览器、完整客户端吞吐和所有协议类型；Node/V8、对象模型和调用入口都是结果的一部分。默认不再为几个百分点反复改写 TS 热循环。出现真实业务热点、新支持类型、正确性缺陷或明确资源问题时，再以对应输入重开切片。
 
@@ -16,7 +16,7 @@ TS 当前实现与第五轮验收已提交为 GSR `9801808`。在既定 Node.js 
 | 正式 Go 依赖 | `github.com/cnooljaw/gosproto v0.4.0`；GSR go.mod 未升级 | 保留正式版本对照与发布边界 |
 | 后续 Go 实施起点 | 独立 gosproto 提交 `6012b06533657721aff66e1ea16ab158153f6e44`，已包含后续两轮优化，尚未发布 | 从当前源码重建 Go PB/SP 基线和 profile，再做增量 |
 
-Go 不是仍停留在“只保证正确”的初版。已落地最终缓冲直写、预检布局复用、类型化数组/optional 标量、有界 tag 索引和混合 word packing。不能重做已完成的工作，或把当前结果与更早版本相减来归因新收益。最近 Go 证据见 [第二轮结果](benchmarks/2026-10-15-sproto-round2/RESULTS.md)；下一轮仍需重新绑定当前源码与工具链。
+Go 不是仍停留在“只保证正确”的初版。已落地最终缓冲直写、预检布局复用、类型化数组/optional 标量、有界 tag 索引和混合 word packing。不能重做已完成的工作，或把当前结果与更早版本相减来归因新收益。最近 Go 证据见 [第二轮结果](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round2/RESULTS.md)；下一轮仍需重新绑定当前源码与工具链。
 
 ## 2. 性能优化不能改变的契约
 
@@ -34,7 +34,7 @@ TS 并未验收 Go 库支持的全部 schema、double 或整数范围。可迁�
 
 最早探针发现 boolean 和混合正负 int64 数组错误。只测字符串或自身 Encode→Decode 往返，会让两个相互配合的错误蒙混过关。先用独立官方 raw/packed 向量复现，再修复，再纳入排名。未知 body 字段未消费导致后续字段错位，以及融合 scratch 挤占原 body 预算，也都先建立回归再修复。
 
-固定官方仓库与版本，分别验证编码字节和解码语义。当前官方快照自身有已记录的部分 64 位 C 解码缺陷，不能为了与错误结果一致而修改正确 wire；参考 [官方兼容记录](SPROTO-INTEGRATION-HISTORY.md)。旧实现只适合作为重构差分的一方，不自动等于规范。
+固定官方仓库与版本，分别验证编码字节和解码语义。当前官方快照自身有已记录的部分 64 位 C 解码缺陷，不能为了与错误结果一致而修改正确 wire；参考 [官方兼容记录](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/SPROTO-INTEGRATION-HISTORY.md)。旧实现只适合作为重构差分的一方，不自动等于规范。
 
 旧实现差分、独立官方向量、跨语言集成承担不同职责。9560 组通过不代表输入穷尽；Go 仍应复用自己的完整回归和有限 fuzz。
 
@@ -53,7 +53,7 @@ TS 并未验收 Go 库支持的全部 schema、double 或整数范围。可迁�
 | 小幅展开，保留尾部和额度检查 | 连续零头四个一组计数，剩余逐字节处理 | 以零段长度和混合输入验证收益；Go 的零初始化与编译器行为不同，需重新测量 |
 | 段状态留在段循环 | FF 合并集中到 Pack 主循环，普通混合 word 跳过段收尾 | 缩小每个 word 的工作，不按消息名称或特定 mask 特判；同时测内联预算和已有 FF 快路径 |
 
-这些收益分布在不同版本、输入谱和调用入口，不能把各轮百分比连乘成一次累计提速。源码、原始值和取舍分别在 [初轮优化](benchmarks/2026-10-15-optimized/RESULTS.md)、[长块切片](benchmarks/2026-10-15-sproto-next/RESULTS.md)、[第二轮](benchmarks/2026-10-15-sproto-round2/RESULTS.md)、[第三轮](benchmarks/2026-10-15-sproto-round3/RESULTS.md)、[第四轮](benchmarks/2026-10-15-sproto-round4/RESULTS.md) 和 [第五轮](benchmarks/2026-10-15-sproto-round5/RESULTS.md)。
+这些收益分布在不同版本、输入谱和调用入口，不能把各轮百分比连乘成一次累计提速。源码、原始值和取舍分别在 [初轮优化](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-optimized/RESULTS.md)、[长块切片](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-next/RESULTS.md)、[第二轮](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round2/RESULTS.md)、[第三轮](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round3/RESULTS.md)、[第四轮](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round4/RESULTS.md) 和 [第五轮](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round5/RESULTS.md)。
 
 ## 5. 失败尝试比代码技巧更值得保留
 
@@ -114,7 +114,7 @@ self/cumulative 存在包含关系，不能相加；占比随总耗时分母变�
 | 性能形态 | 32 B 小包、UTF-8、4 KiB ASCII/零、不同非零字节密度、随机数据、FF/零前缀接稀疏尾部、重复短段 |
 | 集成 | 现有官方对照、有限 fuzz、库 race/vet，以及临时依赖下 GSR Sproto Dispatcher 与 Plain/MAC Echo |
 
-Go offset 访问的后续回归说明：字段属于当前 schema，不等于实际嵌套 Go 值具有该 schema 的布局。公开父描述被替换时，两者可能分离；验证矩阵需覆盖根字段替换、子描述替换与子 schema 内字段替换。校验可在同构数组入口复用，但必须依赖实际类型事实，不能把安全检查移出循环后静默取消。正确性修复与加速同时发生时，分别报告上一提交和最小修复版对照，保留必要校验的成本。见 [Go 实例](benchmarks/2026-10-16-gosproto-bindings/RESULTS.md)。
+Go offset 访问的后续回归说明：字段属于当前 schema，不等于实际嵌套 Go 值具有该 schema 的布局。公开父描述被替换时，两者可能分离；验证矩阵需覆盖根字段替换、子描述替换与子 schema 内字段替换。校验可在同构数组入口复用，但必须依赖实际类型事实，不能把安全检查移出循环后静默取消。正确性修复与加速同时发生时，分别报告上一提交和最小修复版对照，保留必要校验的成本。见 [Go 实例](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-16-gosproto-bindings/RESULTS.md)。
 
 14 种 Pack 和 46 种 Unpack 形态来自 TS 的回退排查，不是 Go 已覆盖数量。将其中缺失且相关的形态补入现有 Go Benchmark 后，才报告 Go 的覆盖情况；不要求不加区分地复制所有 TS 微基准。
 
@@ -130,6 +130,6 @@ Go offset 访问的后续回归说明：字段属于当前 schema，不等于实
 
 目标是检验同一 Sproto wire 下 Go 实现的改进空间，而不是预先承诺全面超过 Go Protobuf。TS 的结果证明实现选择能显著改变结果；是否能在 Go 重现同样曲线，必须由 Go 自己的基线、profile 和验收回答。
 
-上述流程已在 [Go 第三轮](benchmarks/2026-10-16-gosproto-round3/RESULTS.md) 执行：解包展开、固定窗口和原生指针直接赋值都没有通过完整收益筛选，不能因为 TS 曾受益就保留。当前只收窄了有界布局记录的存储宽度，取得确定的内存收益，CPU 基本持平。这也是经验迁移的边界：迁移验证方法，不承诺迁移同一段代码后的收益。
+上述流程已在 [Go 第三轮](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-16-gosproto-round3/RESULTS.md) 执行：解包展开、固定窗口和原生指针直接赋值都没有通过完整收益筛选，不能因为 TS 曾受益就保留。当前只收窄了有界布局记录的存储宽度，取得确定的内存收益，CPU 基本持平。这也是经验迁移的边界：迁移验证方法，不承诺迁移同一段代码后的收益。
 
-[大型 Encoder 切片](benchmarks/2026-10-16-gosproto-encoder/RESULTS.md) 进一步验证：缓存操作码却增加解释/函数层并没有自然获得速度，候选被撤回；绑定实际 Go 字段位置并只读访问原生 `*int64` 才显著减少大型编码成本。普通 struct、命名类型、预算和输出所有权继续成立，公开元信息变化要求 owner/形状检查。这些检查有真实小包成本，不能为了排名删除；需要同时披露每调用分配、一次性元信息与完整帧收益。
+[大型 Encoder 切片](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-16-gosproto-encoder/RESULTS.md) 进一步验证：缓存操作码却增加解释/函数层并没有自然获得速度，候选被撤回；绑定实际 Go 字段位置并只读访问原生 `*int64` 才显著减少大型编码成本。普通 struct、命名类型、预算和输出所有权继续成立，公开元信息变化要求 owner/形状检查。这些检查有真实小包成本，不能为了排名删除；需要同时披露每调用分配、一次性元信息与完整帧收益。

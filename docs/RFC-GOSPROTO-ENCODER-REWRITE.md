@@ -1,10 +1,10 @@
 # gosproto 大型结构体编码：诊断与重构提案
 
-状态：2026-10-16，用户已同意按本提案实施。原生 `*int64` 受控只读字段访问已本地提交：独立库 `819047e`、GSR `bf3ed8c`；随后嵌套类型校验及整数记录数组循环已提交为独立库 `5e491ff`、GSR `70c84af`，均未推送/发布。大型 Encode 约 6.54 µs，同场 PB 7.59 µs。该专项 Decode、Pack/Unpack 与 TS 保持冻结，不引入生成器，正式依赖仍为 v0.4.0。实现和验证见下文第 7、8 节；后续 packing 切片另见 [结果](benchmarks/2026-10-16-gosproto-pack/RESULTS.md)。
+以下保留2026-10-16～17的历史设计依据和当时数据，不代表当前性能或冻结状态。重复进展日志及原全文见[完整档案](benchmarks/README.md)和[v1.0.0原文](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/RFC-GOSPROTO-ENCODER-REWRITE.md)；当前入口为[优化状态](GOSPROTO-OPTIMIZATION-STATUS.md)。
 
 ## 1. 当前问题已经可以拆开
 
-[第三轮正式采样](benchmarks/2026-10-16-gosproto-round3/RESULTS.md) 中，Go SP Encode 14.498 µs，PB 7.558 µs，约为 PB 的 1.92 倍；SP 3968 B/op、2 allocs/op。整数数组纯编解码胜出，说明数值数组路径已有效，但不能据此认定所有 Sproto body 算法都已最优。
+[第三轮正式采样](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-16-gosproto-round3/RESULTS.md) 中，Go SP Encode 14.498 µs，PB 7.558 µs，约为 PB 的 1.92 倍；SP 3968 B/op、2 allocs/op。整数数组纯编解码胜出，说明数值数组路径已有效，但不能据此认定所有 Sproto body 算法都已最优。
 
 这个大型夹具不是一块大数组，而是一个根对象与 128 个 `Item`：
 
@@ -66,7 +66,7 @@ wire 成本也有区别：SP body 3336 B，PB 2081 B，SP 大 60.3%；SP packing
 
 另一个独立系列只将 inline 提前返回，完整 Encode 中位数 15.125 → 14.939 µs，约 -1.2%；但独立预检反而 6.494 → 7.100 µs。全部样本保留，不据此认定已有稳定加速，更不把它当成解决约两倍差距的主方案。
 
-[诊断原始值、profile 摘要与复现](benchmarks/2026-10-16-gosproto-encode-analysis/README.md) 单独保存，不改写第三轮正式基线。
+[诊断原始值、profile 摘要与复现](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-16-gosproto-encode-analysis/README.md) 单独保存，不改写第三轮正式基线。
 
 ## 5. 推荐：重构编码执行层，不再无限堆反射技巧
 
@@ -118,7 +118,7 @@ unsafe 仅存在于独立的 `encode_pointer.go`：通过反射公开 API 获取
 
 测试增量为：原生字段位于未编码填充后、嵌套/空指针及 inline/4/8 字节边界，与命名类型逐字节对照；公开 Fields 跨结构体替换，以及 Wire/Array 形状改变仍读取当前描述。既有 Codec fuzz 加入根/子结构的原生整数指针，避免只覆盖数组与 double。其余已有预算、ownership 和官方向量用例复用，不在 GSR 重复搭建底层测试。
 
-验收数据、失败候选、profile 与平台范围记录在 [首个实施切片](benchmarks/2026-10-16-gosproto-encoder/RESULTS.md)，已本地提交为独立库 `819047e`、GSR `bf3ed8c`。正式依赖与发布仍独立处理。
+验收数据、失败候选、profile 与平台范围记录在 [首个实施切片](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-16-gosproto-encoder/RESULTS.md)，已本地提交为独立库 `819047e`、GSR `bf3ed8c`。正式依赖与发布仍独立处理。
 
 ## 8. 嵌套类型事实与数组入口复用
 
@@ -126,4 +126,4 @@ unsafe 仅存在于独立的 `encode_pointer.go`：通过反射公开 API 获取
 
 同构原生整数结构数组在入口核对实际类型及全部当前字段，再以专用循环处理元素；不再对每个元素的每个字段重复检查 owner/Wire/Array。presence、预算、深度、tag 间隔和字节规则仍逐元素执行，输入与输出契约不变。通用循环增加同构分支的候选因 AddressBook 回退撤回，未扩大 unsafe 的类型覆盖。
 
-大型 Encode 相对上一提交同进程 8.382 → 6.528 µs，同场 PB 7.606 µs；相对最小类型修复版 9.730 → 6.544 µs，同场 PB 7.588 µs。AddressBook 相对上一提交 +12.0%，相对最小修复版 +1.3%，修复成本单独公开，不称为无回退。新预算/tag 回归、结构数组 fuzz、完整库 race/checkptr/官方对照与 GSR 接线通过。完整结果及可复现修复对照见 [嵌套绑定与整数记录数组](benchmarks/2026-10-16-gosproto-bindings/RESULTS.md)。该切片已本地提交为独立库 `5e491ff`、GSR `70c84af`，正式依赖仍为 v0.4.0。
+大型 Encode 相对上一提交同进程 8.382 → 6.528 µs，同场 PB 7.606 µs；相对最小类型修复版 9.730 → 6.544 µs，同场 PB 7.588 µs。AddressBook 相对上一提交 +12.0%，相对最小修复版 +1.3%，修复成本单独公开，不称为无回退。新预算/tag 回归、结构数组 fuzz、完整库 race/checkptr/官方对照与 GSR 接线通过。完整结果及可复现修复对照见 [嵌套绑定与整数记录数组](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-16-gosproto-bindings/RESULTS.md)。该切片已本地提交为独立库 `5e491ff`、GSR `70c84af`，正式依赖仍为 v0.4.0。

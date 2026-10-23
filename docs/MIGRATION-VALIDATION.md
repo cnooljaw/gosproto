@@ -1,6 +1,8 @@
 # 迁移验收（2026-10-23）
 
-[结构化结果](MIGRATION-VALIDATION.json) · [来源清单](MIGRATION-SOURCES.json) · [迁移说明](REPOSITORY-MIGRATION.md)
+以下为迁移时点的验收记录，保留原数据与当时限制；当前发布及资料位置见[优化状态](GOSPROTO-OPTIMIZATION-STATUS.md)和[历史档案](benchmarks/README.md)。
+
+[结构化结果](MIGRATION-VALIDATION.json) · [来源清单](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/MIGRATION-SOURCES.json) · [迁移说明](REPOSITORY-MIGRATION.md)
 
 ## 源码与证据
 

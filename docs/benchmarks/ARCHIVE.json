@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "sourceTag": "v1.0.0",
+  "sourceCommit": "adcdd9451570c831a3b578f0dc5983d15763ffe3",
+  "archive": {
+    "file": "gosproto-v1.0.0-documentation-archive.tar.gz",
+    "url": "https://github.com/cnooljaw/gosproto/releases/download/v1.0.1/gosproto-v1.0.0-documentation-archive.tar.gz",
+    "sha256": "e90360f88bb620aa9f1ef9e89692d03c4f368e9faf8803b6df4a9867bcaa4d96",
+    "bytes": 38952062
+  },
+  "checksumsUrl": "https://github.com/cnooljaw/gosproto/releases/download/v1.0.1/SHA256SUMS",
+  "manifestPath": "gosproto-v1.0.0-documentation-archive/ARCHIVE-MANIFEST.json",
+  "files": 8774,
+  "trackedFiles": 8768,
+  "ignoredPythonCacheFiles": 6,
+  "uncompressedBytes": 335071201,
+  "originalMigrationHistoricalEntriesVerified": 8754,
+  "verification": {
+    "everyArchivedFileSHA256Matched": true,
+    "githubServerAssetSHA256Matched": true,
+    "downloadedReleaseAssetSHA256Matched": false
+  }
+}

@@ -7,7 +7,7 @@
 需要 Go 1.24 或更高版本。
 
 ```sh
-go get github.com/cnooljaw/gosproto@v1.0.0
+go get github.com/cnooljaw/gosproto@v1.0.1
 ```
 
 ## 快速开始
@@ -254,7 +254,9 @@ npm --prefix benchmarks ci
 npm --prefix benchmarks run check
 ```
 
-[当前优化状态](docs/GOSPROTO-OPTIMIZATION-STATUS.md) · [历史报告](docs/benchmarks/README.md) · [迁移说明](docs/REPOSITORY-MIGRATION.md) · [开发规范](AGENTS.md)
+[当前优化状态](docs/GOSPROTO-OPTIMIZATION-STATUS.md) · [结果摘要与历史档案](docs/benchmarks/README.md) · [迁移说明](docs/REPOSITORY-MIGRATION.md) · [开发规范](AGENTS.md)
+
+v1.0.1 起，历史原始采样、源码快照和实验日志保存在Release附件，源码树保留摘要与校验索引；活跃Benchmark、固定夹具及回归测试继续随仓库维护。
 
 ## 许可证
 

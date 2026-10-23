@@ -47,3 +47,5 @@ SPROTODUMP_DIR=/path/to/pinned-sprotodump npm run generate
 官方源码版本与哈希见 `oracle-source.json`，生成需要protoc、protoc-gen-go、固定sprotodump及Lua。生成物提交以便普通使用方不安装生成工具。包装脚本固定上游同源行Request/Response的声明顺序并规范末尾换行，字段与Protocol表保持不变。
 
 [Go配对工具](tools/go-pairs/README.md) · [当前优化状态](../docs/GOSPROTO-OPTIMIZATION-STATUS.md) · [历史报告索引](../docs/benchmarks/README.md)
+
+历史实验的原始数据和脚本保存在Release附件；本工程、固定夹具及生成源码继续维护。下载档案后可执行 `python3 tools/verify-history.py /path/to/gosproto-v1.0.0-documentation-archive.tar.gz` 做整体和逐文件校验（Python >=3.9），无需解压。

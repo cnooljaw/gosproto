@@ -68,3 +68,9 @@ Thumbs.db
 # 本地多模块联调；正式依赖不包含本机覆盖
 go.work
 go.work.sum
+
+# 已外置的历史实验资料；新采样统一输出到 tmp/
+/docs/benchmarks/20*/
+/docs/MIGRATION-SOURCES.json
+/docs/GSR-VALIDATION-HISTORY.md
+/docs/SPROTO-INTEGRATION-HISTORY.md

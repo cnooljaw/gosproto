@@ -6,8 +6,8 @@
 
 ## 1. 对照范围与测量口径
 
-- 历史基线：[v0.4.0 完整复测](benchmarks/2026-10-15-v0.4.0/report.md)。
-- 当前实现：[第二轮结果](benchmarks/2026-10-15-sproto-round2/RESULTS.md)。
+- 历史基线：[v0.4.0 完整复测](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-v0.4.0/report.md)。
+- 当前实现：[第二轮结果](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round2/RESULTS.md)。
 - 实际使用的 TS Protobuf 是 `@bufbuild/protobuf 2.15.0`，不是 protobuf.js。检查其 `to-binary`、`from-binary` 和 `wire/binary-encoding` 源码。
 - Sproto 对照官方固定快照 `e93fd5a0653b2bcab38d3b830958bf2e3a901b5f` 的 `sproto.c`、`lsproto.c`，并核对只读 `../skynet/lualib-src/sproto` 中对应实现；不更换 wire 规范。
 - 本次诊断的生产 TS 源码 SHA-256：`18be66be36805c274551ee47ad0c43e4af8c5ab064fde7990c6911d5611d439d`。
@@ -136,7 +136,7 @@ Sproto 当前字符串为 `Buffer.byteLength` 后 `Buffer.write`；PB 使用预�
 
 无分支、先算 mask 和双字节查表的 Pack 候选均因数值消息回退撤回；Unpack 原生长零块比较会拖慢重复短段，也未采用。最终没有增加查表内存、缓存状态或生产 Pack 改动。
 
-排查发现原 Echo 基准为 PB 和每个 SP 版本分别 repeat 文本，相同值在 V8 中可能成为平坦或拼接字符串，造成编码源码相同却耗时相差数倍。现在准备期只构造一次并共享输入，重新完整采样；不修改生产编码器或历史结果。历史 Echo 编码百分比需考虑输入表示因素，代表性 body 原先已共享输入。完整证据、原始值、官方对照及复现方式见 [第四轮验收](benchmarks/2026-10-15-sproto-round4/RESULTS.md)。第四轮已提交为 `d9655b8`，未推送。
+排查发现原 Echo 基准为 PB 和每个 SP 版本分别 repeat 文本，相同值在 V8 中可能成为平坦或拼接字符串，造成编码源码相同却耗时相差数倍。现在准备期只构造一次并共享输入，重新完整采样；不修改生产编码器或历史结果。历史 Echo 编码百分比需考虑输入表示因素，代表性 body 原先已共享输入。完整证据、原始值、官方对照及复现方式见 [第四轮验收](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round4/RESULTS.md)。第四轮已提交为 `d9655b8`，未推送。
 
 ## 8. Pack 字节分布与公开路径验收
 
@@ -148,4 +148,4 @@ Sproto 当前字符串为 `Buffer.byteLength` 后 `Buffer.write`；PB 使用预�
 
 基准收紧为同操作的 PB/SP 前后版本紧邻采样，并在奇数轮反转；新增 14 种 Pack 字节形态，连同 46 种 Unpack 形态共 250 项、1250 个样本。大型游戏与整数数组 Pack 约 -7.3%/-4.9%，FF 六/七字节混合段约 -35%；没有 SP 项耗时中位数回退超过 10%。五种代表性消息的原生组合编码/解码当前为 10/10 低于 PB，不扩大为协议整体或 Go/浏览器结论。阶段中位数相除不等于业务 CPU 占比。
 
-增加独立诊断脚本记录 mask 分布、显式 Buffer 工厂/视图调用以及 Pack/PEncode CPU profile。实际 pencode profile 中，整数数组 Pack 累计样本占比约 73% → 70%，大型游戏消息约 27% → 29%；后者其余编码工作仍占主要部分，不把两类消息一概归为 Pack 主导。最终数据、失败候选和口径限制见 [第五轮验收](benchmarks/2026-10-15-sproto-round5/RESULTS.md)。第五轮已提交为 `9801808`，未推送。
+增加独立诊断脚本记录 mask 分布、显式 Buffer 工厂/视图调用以及 Pack/PEncode CPU profile。实际 pencode profile 中，整数数组 Pack 累计样本占比约 73% → 70%，大型游戏消息约 27% → 29%；后者其余编码工作仍占主要部分，不把两类消息一概归为 Pack 主导。最终数据、失败候选和口径限制见 [第五轮验收](https://github.com/cnooljaw/gosproto/blob/v1.0.0/docs/benchmarks/2026-10-15-sproto-round5/RESULTS.md)。第五轮已提交为 `9801808`，未推送。
